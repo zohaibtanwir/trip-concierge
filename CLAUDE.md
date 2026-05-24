@@ -71,7 +71,7 @@ These exist because of the supply chain attack landscape in 2026 (Axios, TanStac
 - **Run the test suite before declaring a slice done.** `make test` runs both Python and Node tests.
 - **Run linters and type checkers before committing.** `make check` runs `ruff`, `mypy`, `biome`, `tsc`.
 - **Update `BUILD_PLAN.md`** when a slice is completed. Mark it `[x]` and link to the merge commit.
-- **Use Beads for task tracking.** `bd next` to get the next ticket. `bd done <id>` when complete.
+- **Use Beads for task tracking.** `bd ready` to see what's unblocked. `bd update <id> --claim` when starting (atomic: sets in_progress + assignee). `bd close <id>` when complete. Issue IDs look like `trip-concierge-a3f2dd`.
 - **Write structured logs**, never print statements. Python: `structlog`. TypeScript: `pino`.
 - **Use type hints everywhere in Python.** Mypy strict mode is on; the build fails if you skip them.
 - **Prefer composition over inheritance**, prefer functions over classes when stateless.
@@ -132,8 +132,8 @@ trip-concierge/
 │   └── tests/
 ├── .claude/
 │   └── rules/                 # one file per recurring rule
-├── .beads/
-│   └── trip-concierge.db      # Beads DoltDB
+├── .beads/                    # Beads (Dolt embedded) — local-only via stealth mode
+│   └── embeddeddolt/          # excluded by .git/info/exclude; seed via scripts/seed_beads.sh
 └── .github/
     └── workflows/             # CI — pinned to SHA, no pull_request_target
 ```
@@ -151,8 +151,10 @@ trip-concierge/
 | `make db.migrate` | Apply Alembic migrations |
 | `make db.reset` | Drop and recreate the local DB (destructive — confirms) |
 | `make mcp.test` | Test MCP server against Claude Desktop config |
-| `bd next` | Get next ready Beads ticket |
-| `bd done <id>` | Mark a Beads ticket as done |
+| `bd ready` | Show all unblocked Beads tickets (top of list is what to grab next) |
+| `bd update <id> --claim` | Claim a ticket (atomic: status=in_progress, assignee=you) |
+| `bd close <id>` | Mark a Beads ticket as done |
+| `bash scripts/seed_beads.sh` | Re-seed all 33 BUILD_PLAN.md slices on a fresh clone |
 
 ---
 
@@ -181,14 +183,15 @@ Defined in `.env.example`. Copy to `.env.local` (web) and `.env` (backend) befor
 
 **Session start checklist:**
 1. `git pull`
-2. `bd next` — get the next ready ticket
-3. Read the ticket; if it references a slice in `BUILD_PLAN.md`, read that slice
-4. If the ticket touches agents, read `agents/prompts.md`
-5. Write the failing test first
-6. Implement
-7. `make check && make test`
-8. Commit with a message that references the Beads ID and the slice
-9. `bd done <id>` and push
+2. `bd ready` — see what's unblocked; grab the top one
+3. `bd update <id> --claim` to mark it in_progress
+4. Read the ticket; if it references a slice in `BUILD_PLAN.md`, read that slice
+5. If the ticket touches agents, read `agents/prompts.md`
+6. Write the failing test first
+7. Implement
+8. `make check && make test`
+9. Commit with a message that references the Beads ID and the slice (format: `feat(slice-X.Y): <change>` with `Refs: trip-concierge-<hash>` in the body)
+10. `bd close <id>` and push
 
 **If you're blocked:**
 - Don't invent. Read the relevant doc.
