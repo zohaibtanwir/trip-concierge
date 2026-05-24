@@ -1,0 +1,54 @@
+version: 2
+
+# Dependabot opens grouped update PRs; CLAUDE.md forbids auto-merging them.
+# Per the supply-chain rule, every lockfile-touching PR needs a second pair
+# of eyes — including these.
+
+updates:
+  # GitHub Actions: keep SHAs current. Dependabot updates both the SHA and
+  # the trailing # vX.Y.Z comment when a new tag points at a new commit.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "ci"]
+
+  # Backend Python deps (uv-managed via pyproject.toml).
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    versioning-strategy: "increase"
+    groups:
+      backend-python:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "backend"]
+
+  # MCP server Python deps.
+  - package-ecosystem: "pip"
+    directory: "/mcp_server"
+    schedule:
+      interval: "weekly"
+    versioning-strategy: "increase"
+    groups:
+      mcp-server-python:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "mcp"]
+
+  # Web npm deps. save-exact=true in web/.npmrc keeps pins exact.
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+    versioning-strategy: "increase"
+    groups:
+      web-npm:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "web"]
