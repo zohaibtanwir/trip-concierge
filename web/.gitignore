@@ -1,0 +1,8 @@
+# Next.js (committed: next-env.d.ts — Next regenerates but content is stable
+# and committing makes `tsc --noEmit` work on a fresh clone without `next dev`)
+.next/
+out/
+*.tsbuildinfo
+
+# Node / pnpm
+node_modules/

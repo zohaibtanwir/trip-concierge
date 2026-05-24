@@ -1,0 +1,14 @@
+# pnpm 11+ settings live here, not in package.json's deprecated `pnpm.*` block.
+# Not a real workspace; the filename is misleading.
+
+# next@15.5.18 bundles postcss 8.4.31 which has GHSA-qx2v-qp2m-jg93
+# (XSS via unescaped </style> in CSS stringify, moderate). 8.5.15 is the
+# patched version already present in the tree via tailwind/vite branches.
+overrides:
+  postcss: 8.5.15
+
+# sharp does image optimization for next/image in production. We don't need
+# it for dev or the smoke test, so block its postinstall binary download.
+# Flip to true if we start using <Image> with optimization on by default.
+allowBuilds:
+  sharp: false
