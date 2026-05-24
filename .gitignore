@@ -1,5 +1,39 @@
-
-# Beads / Dolt files (added by bd init)
+# Beads / Dolt (from bd init + survives across clones)
 .dolt/
 *.db
 .beads-credential-key
+.beads/embeddeddolt/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+.next/
+.turbo/
+dist/
+build/
+.pnpm-store/
+
+# Env (commit .env.example only)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
