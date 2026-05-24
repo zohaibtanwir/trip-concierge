@@ -14,7 +14,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 0.1: Repo skeleton
 
-- [ ] **Done when:** `make setup` works on a fresh clone. Empty FastAPI returns `{"ok": true}` on `/health`. Empty Next.js page loads at `localhost:3000`. Empty MCP server starts and lists zero tools.
+- [x] **Done when:** `make setup` works on a fresh clone. Empty FastAPI returns `{"ok": true}` on `/health`. Empty Next.js page loads at `localhost:3000`. Empty MCP server starts and lists zero tools. *(Landed across 8adce55, 707ad16, 531ecb2, 2da4457; Beads `trip-concierge-q63` closed.)*
 - **Files to create:**
   - `Makefile` with `setup`, `dev`, `test`, `check` targets
   - `backend/pyproject.toml` with FastAPI, uvicorn, pydantic, mypy, ruff, pytest pinned exact
