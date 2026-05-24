@@ -26,7 +26,7 @@ Agent definitions: `agents/prompts.md`
 | Primary LLM | Claude Sonnet 4 via Anthropic SDK |
 | API service | FastAPI + uvicorn |
 | MCP server | Python `mcp` SDK |
-| Web frontend | Next.js 14 App Router + Tailwind |
+| Web frontend | Next.js 15 App Router + Tailwind |
 | Maps | MapLibre GL + OSM tiles |
 | Database | PostgreSQL 16 |
 | Vector store | pgvector extension |

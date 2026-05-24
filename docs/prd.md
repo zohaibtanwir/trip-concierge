@@ -102,7 +102,7 @@ The 2026 AI travel planner market is saturated with itinerary generators that al
 | LLM | Claude Sonnet 4 (primary), GPT-4-class fallback | Quality/cost balance; multi-provider for resilience |
 | API service | FastAPI | Async, OpenAPI native, fits Python agent code |
 | MCP server | Python MCP SDK | Wraps FastAPI; deployable as a stdio or HTTP server |
-| Web frontend | Next.js 14 (App Router) + Tailwind | PWA-ready, server components for fast first paint |
+| Web frontend | Next.js 15 (App Router) + Tailwind | PWA-ready, server components for fast first paint |
 | Maps | MapLibre GL + OpenStreetMap tiles | No vendor lock-in, free tier |
 | Database | PostgreSQL | Trip state, user data |
 | Vector store | pgvector (Postgres extension) | Source embeddings for BYO research, memory |

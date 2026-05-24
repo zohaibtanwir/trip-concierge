@@ -19,7 +19,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
   - `Makefile` with `setup`, `dev`, `test`, `check` targets
   - `backend/pyproject.toml` with FastAPI, uvicorn, pydantic, mypy, ruff, pytest pinned exact
   - `backend/app/main.py` with `/health` route
-  - `web/package.json` with Next.js 14, Tailwind, biome pinned exact
+  - `web/package.json` with Next.js 15, Tailwind, biome pinned exact
   - `web/app/page.tsx` with placeholder
   - `mcp_server/pyproject.toml`
   - `mcp_server/server.py` with empty tool registration
