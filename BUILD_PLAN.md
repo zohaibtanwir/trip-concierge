@@ -32,7 +32,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 0.2: CI pipeline
 
-- [ ] **Done when:** PR triggers a CI run that executes `make check && make test` and fails if either fails. GitHub Actions pinned to full SHAs. `pull_request_target` is not used anywhere.
+- [x] **Done when:** PR triggers a CI run that executes `make check && make test` and fails if either fails. GitHub Actions pinned to full SHAs. `pull_request_target` is not used anywhere. *(Landed as PR #1, squashed to a94afd1; Beads `trip-concierge-dr6` closed. Failure path verified live: green → fail on F401 → green after revert.)*
 - **Files to create:**
   - `.github/workflows/ci.yml`
   - `.github/dependabot.yml` (groups dependencies, opens PRs not merges)
