@@ -62,7 +62,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 1.2: Trip CRUD endpoints
 
-- [ ] **Done when:** `POST /trips` creates a Trip and returns its ID. `GET /trips/{id}` returns it. Pydantic validation rejects bad input.
+- [x] **Done when:** `POST /trips` creates a Trip and returns its ID. `GET /trips/{id}` returns it. Pydantic validation rejects bad input. *(Landed as PR #6, squashed to a6c2aad; Beads `trip-concierge-glh` closed. Roundtrip + 422 + 404 covered.)*
 - **Files to create:**
   - `backend/app/schemas/trip.py` (Pydantic)
   - `backend/app/routes/trips.py`
