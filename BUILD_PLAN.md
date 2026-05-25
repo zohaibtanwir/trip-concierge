@@ -51,7 +51,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 1.1: Postgres + Alembic
 
-- [ ] **Done when:** `make db.migrate` creates the `users` and `trips` tables on a fresh DB. `psql` shows them. Connection happens via `DATABASE_URL`.
+- [x] **Done when:** `make db.migrate` creates the `users` and `trips` tables on a fresh DB. `psql` shows them. Connection happens via `DATABASE_URL`. *(Landed as PR #5, squashed to 1e7cf6e; Beads `trip-concierge-kbd` closed. pgvector/pg16 image, single Postgres across dev/CI/prod.)*
 - **Files to create:**
   - `backend/app/db/base.py` (SQLAlchemy)
   - `backend/app/db/migrations/env.py`
