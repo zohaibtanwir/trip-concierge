@@ -16,6 +16,12 @@ updates:
         patterns: ["*"]
     open-pull-requests-limit: 5
     labels: ["dependencies", "ci"]
+    ignore:
+      # Major bumps are migration work; never auto-PR them. We do them as
+      # deliberate slices (see PR #3 — next 15→16 / react 18→19 was a no-go
+      # one-day after we explicitly pinned 15/18).
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Backend Python deps (uv-managed via pyproject.toml).
   - package-ecosystem: "pip"
@@ -28,6 +34,9 @@ updates:
         patterns: ["*"]
     open-pull-requests-limit: 5
     labels: ["dependencies", "backend"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # MCP server Python deps.
   - package-ecosystem: "pip"
@@ -40,6 +49,9 @@ updates:
         patterns: ["*"]
     open-pull-requests-limit: 5
     labels: ["dependencies", "mcp"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Web npm deps. save-exact=true in web/.npmrc keeps pins exact.
   - package-ecosystem: "npm"
@@ -52,3 +64,6 @@ updates:
         patterns: ["*"]
     open-pull-requests-limit: 5
     labels: ["dependencies", "web"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
