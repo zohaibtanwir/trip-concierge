@@ -16,6 +16,10 @@ repos:
         language: system
         entry: uv --project=backend run ruff check
         files: ^backend/.*\.py$
+        # Generated Alembic migrations are excluded from style rules — the
+        # explicit file args we pass to ruff bypass pyproject.toml's exclude,
+        # so we filter at the pre-commit level instead.
+        exclude: ^backend/app/db/migrations/versions/
         types: [python]
 
       - id: ruff-format-backend
@@ -23,6 +27,7 @@ repos:
         language: system
         entry: uv --project=backend run ruff format --check
         files: ^backend/.*\.py$
+        exclude: ^backend/app/db/migrations/versions/
         types: [python]
 
       - id: ruff-mcp-server
