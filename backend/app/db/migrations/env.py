@@ -17,10 +17,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Allow env var to override the URL set in alembic.ini (which is blank).
-env_url = os.environ.get("DATABASE_URL")
-if env_url:
-    config.set_main_option("sqlalchemy.url", env_url)
+# Prefer the URL explicitly set on the Config (e.g. by tests).
+# Fall back to DATABASE_URL from env for normal CLI invocations.
+if not config.get_main_option("sqlalchemy.url"):
+    env_url = os.environ.get("DATABASE_URL")
+    if env_url:
+        config.set_main_option("sqlalchemy.url", env_url)
 
 target_metadata = Base.metadata
 
