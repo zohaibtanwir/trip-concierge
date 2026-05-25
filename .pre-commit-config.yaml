@@ -44,6 +44,20 @@ repos:
         files: ^mcp_server/.*\.py$
         types: [python]
 
+      - id: ruff-agents
+        name: ruff (agents)
+        language: system
+        entry: uv --project=agents run ruff check
+        files: ^agents/.*\.py$
+        types: [python]
+
+      - id: ruff-format-agents
+        name: ruff-format (agents)
+        language: system
+        entry: uv --project=agents run ruff format --check
+        files: ^agents/.*\.py$
+        types: [python]
+
       - id: biome-web
         name: biome (web)
         language: system
