@@ -6,6 +6,7 @@ DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:5432/trip_conci
 setup:
 	cd backend && uv sync
 	cd mcp_server && uv sync
+	cd agents && uv sync
 	cd web && pnpm install
 	$(MAKE) hooks
 
@@ -18,11 +19,13 @@ dev:
 test:
 	cd backend && uv run pytest
 	cd mcp_server && uv run pytest
+	cd agents && uv run pytest
 	cd web && pnpm test
 
 check:
 	cd backend && uv run ruff check . && uv run mypy app
 	cd mcp_server && uv run ruff check . && uv run mypy server.py
+	cd agents && uv run ruff check . && uv run mypy researcher.py crew.py
 	cd web && pnpm exec biome check . && pnpm exec tsc --noEmit
 
 db.up:
