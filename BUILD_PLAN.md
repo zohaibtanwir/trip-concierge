@@ -40,7 +40,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 0.3: Pre-commit hooks and Beads init
 
-- [ ] **Done when:** `git commit` runs ruff, biome, and rejects if either fails. `bd next` returns the first seeded ticket.
+- [x] **Done when:** `git commit` runs ruff, biome, and rejects if either fails. `bd ready` returns the first seeded ticket. *(Landed as PR #4, squashed to 9cc29c2; Beads `trip-concierge-6xp` closed. Failure path verified locally: stage unused `import os` → ruff F401 → commit rejected.)*
 - **Files to create:**
   - `.pre-commit-config.yaml`
   - Seed Beads tickets from this file (one per Phase 0/1 slice initially)
