@@ -1,0 +1,47 @@
+# Runs on every `git commit` after the beads JSONL flush. Catches the cheap
+# class of mistakes (lint errors) before they reach CI. Heavy checks (mypy,
+# tsc, pytest) stay in CI to keep local commits fast.
+#
+# All hooks use `language: system` and invoke the project-local ruff and
+# biome — same versions as `make check`, no parallel cache to drift.
+
+default_stages: [pre-commit]
+fail_fast: false
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-backend
+        name: ruff (backend)
+        language: system
+        entry: uv --project=backend run ruff check
+        files: ^backend/.*\.py$
+        types: [python]
+
+      - id: ruff-format-backend
+        name: ruff-format (backend)
+        language: system
+        entry: uv --project=backend run ruff format --check
+        files: ^backend/.*\.py$
+        types: [python]
+
+      - id: ruff-mcp-server
+        name: ruff (mcp_server)
+        language: system
+        entry: uv --project=mcp_server run ruff check
+        files: ^mcp_server/.*\.py$
+        types: [python]
+
+      - id: ruff-format-mcp-server
+        name: ruff-format (mcp_server)
+        language: system
+        entry: uv --project=mcp_server run ruff format --check
+        files: ^mcp_server/.*\.py$
+        types: [python]
+
+      - id: biome-web
+        name: biome (web)
+        language: system
+        # cd into web/ so biome picks up biome.json and web/.gitignore.
+        entry: bash -c 'cd web && pnpm exec biome check --no-errors-on-unmatched "$@"' --
+        files: ^web/.*\.(ts|tsx|js|jsx|mjs|cjs|json)$

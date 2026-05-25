@@ -1,9 +1,13 @@
-.PHONY: setup dev test check
+.PHONY: setup dev test check hooks
 
 setup:
 	cd backend && uv sync
 	cd mcp_server && uv sync
 	cd web && pnpm install
+	$(MAKE) hooks
+
+hooks:
+	bash scripts/install-hooks.sh
 
 dev:
 	@echo "TODO: phase 1+ — wire backend uvicorn, web pnpm dev, mcp server concurrently"
