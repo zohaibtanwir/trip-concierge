@@ -71,7 +71,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 1.3: First CrewAI agent (Researcher only, hardcoded output)
 
-- [ ] **Done when:** Calling `crew.run(destination="Goa")` returns a list of 3 dummy destinations from the Researcher agent. No real LLM call yet — agent is stubbed to return fixtures.
+- [x] **Done when:** Calling `crew.run(destination="Goa")` returns a list of 3 dummy destinations from the Researcher agent. No real LLM call yet — agent is stubbed to return fixtures. *(Landed as PR #8, squashed to 82d1a3a; Beads `trip-concierge-djm` closed. Agent role/goal/backstory verbatim from prompts.md §1.1.)*
 - **Files to create:**
   - `agents/researcher.py` (CrewAI Agent definition, prompts from `agents/prompts.md`)
   - `agents/crew.py` (single-agent crew)
