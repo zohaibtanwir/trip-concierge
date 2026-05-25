@@ -1,0 +1,23 @@
+# Local Postgres for dev and tests. Matches what we'd deploy on Fly/Hetzner.
+# pgvector image bundles Postgres 16 + the vector extension we'll need in
+# Phase 1.4+ for BYO research embeddings.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: trip-concierge-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: trip_concierge
+    ports:
+      - "5432:5432"
+    volumes:
+      - trip_concierge_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d trip_concierge"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  trip_concierge_pgdata:
