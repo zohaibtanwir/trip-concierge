@@ -20,8 +20,9 @@ from crewai import Crew, Process
 from langfuse import observe
 
 from llm import get_langfuse
+from local_expert import local_expert
 from researcher import researcher
-from tasks import make_research_task
+from tasks import make_local_expertise_task, make_research_task
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +41,17 @@ DEFAULT_INPUTS = {
 
 
 def _build_crew() -> Crew:
+    """Sequential crew: Researcher finds candidates, Local Expert narrows them.
+
+    Slice 2.1 added Local Expert. Slices 2.2/2.3 add Logistics + Budget Auditor.
+    Local Expert receives the Researcher's output via task `context`, never
+    invents new venues (prompts.md §1.2 behavior note).
+    """
+    research = make_research_task()
+    expertise = make_local_expertise_task(research)
     return Crew(
-        agents=[researcher],
-        tasks=[make_research_task()],
+        agents=[researcher, local_expert],
+        tasks=[research, expertise],
         process=Process.sequential,
         verbose=False,
     )
