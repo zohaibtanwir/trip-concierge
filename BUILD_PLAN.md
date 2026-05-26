@@ -105,7 +105,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 2.3: Budget Auditor agent
 
-- [ ] **Done when:** Budget Auditor rejects plans that exceed budget and requests revision. Two-retry policy enforced.
+- [x] **Done when:** Budget Auditor rejects plans that exceed budget and requests revision. Two-retry policy enforced. *(Landed as PR #13, squashed to 46123eb; followup fix 70600d1; Beads `trip-concierge-ge4` closed. Surgeon design — Auditor applies own cuts, orchestrator in crew.py runs up to MAX_AUDIT_PASSES=2 in Python. 5 pure-Python orchestration tests assert the loop deterministically.)*
 - **Files to create:** `agents/budget_auditor.py`
 - **Tests:** synthetic over-budget plan triggers exactly one revision; over-budget after retries surfaces a "couldn't fit" message.
 
