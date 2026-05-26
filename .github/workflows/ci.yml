@@ -1,5 +1,6 @@
 name: CI
 
+# (nudge to retrigger Actions — see slice-2.2 PR retrigger attempt)
 # pull_request (NOT pull_request_target) is the TanStack-attack-safe trigger:
 # the workflow runs in the fork's read-only context with no access to secrets.
 on:
