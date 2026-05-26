@@ -1,15 +1,16 @@
-"""Live test: full sequential crew (Researcher → Local Expert → Logistics).
+"""End-to-end live test: full 4-agent pipeline (Researcher → Local Expert →
+Logistics → Budget Auditor) against real Anthropic + Tavily + Langfuse.
 
 Marked @pytest.mark.live so CI skips it. Run locally with:
     cd agents && uv run pytest -m live
 
-Asserts shape, not content — LLM output is non-deterministic and any
-content assertion would be flaky. Trace upload to Langfuse is verified
-manually in the Langfuse UI.
+Asserts shape, not content — LLM output is non-deterministic. Trace upload
+to Langfuse is verified manually in the UI.
 
-After slice 2.2 the final task is Logistics, so the crew output is a
-day-by-day itinerary keyed by `days`, each day with an ordered `blocks`
-array.
+After slice 2.3 the orchestrator returns an AuditedPlan dict — `days` from
+Logistics (possibly revised by the Auditor), plus audit metadata
+(`approved`, `revision_log`, `per_day_costs`, `total_cost`,
+`constraints_violated`, `explanation`).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import pytest
 
 
 @pytest.mark.live
-def test_full_crew_kickoff_produces_day_by_day_itinerary() -> None:
+def test_full_pipeline_returns_audited_itinerary() -> None:
     from crew import run
 
     result = run(
@@ -33,14 +34,12 @@ def test_full_crew_kickoff_produces_day_by_day_itinerary() -> None:
     )
 
     assert isinstance(result, dict), f"expected dict, got {type(result).__name__}"
+
+    # Days carried through from Logistics, possibly revised by Auditor.
     days = result.get("days")
     assert isinstance(days, list) and len(days) >= 1, (
         f"expected non-empty `days` array; got {result!r}"
     )
-
-    # Each day must have an ordered list of blocks. The blocks themselves
-    # come from Logistics and should have at least a venue name. We're
-    # lenient on field names because LLM phrasing varies.
     for day in days:
         assert isinstance(day, dict), f"day is not a dict: {day!r}"
         blocks = day.get("blocks")
@@ -51,3 +50,26 @@ def test_full_crew_kickoff_produces_day_by_day_itinerary() -> None:
             assert any(k in block for k in name_keys), (
                 f"block missing a name field: keys={list(block)!r}"
             )
+
+    # Auditor surface — these must all exist at the top level.
+    assert isinstance(result.get("approved"), bool), (
+        f"`approved` should be bool, got {type(result.get('approved')).__name__}"
+    )
+    assert isinstance(result.get("revision_log"), list), (
+        f"`revision_log` should be list, got {type(result.get('revision_log')).__name__}"
+    )
+    assert isinstance(result.get("constraints_violated"), list)
+
+    # Every revision_log entry the orchestrator emits is prefixed "Pass N: ".
+    # An empty log is acceptable (pass 1 might have nothing to revise).
+    for entry in result["revision_log"]:
+        assert isinstance(entry, str)
+        assert entry.startswith("Pass 1: ") or entry.startswith("Pass 2: "), (
+            f"revision_log entry not prefixed by orchestrator: {entry!r}"
+        )
+
+    # If approved is False after the loop, an explanation should be present.
+    if not result["approved"]:
+        assert result.get("explanation"), (
+            "approved=False outputs must include an explanation of the gap"
+        )
