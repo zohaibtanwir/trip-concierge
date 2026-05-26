@@ -1,17 +1,20 @@
 """Crew entrypoint.
 
-`run()` calls the LLM via CrewAI's sequential process. `run_stub()`
-keeps the fixture-load path from slice 1.3 so offline tests stay fast.
+Pipeline as of slice 2.3:
 
-After slice 2.2 the crew composition is Researcher → Local Expert →
-Logistics Planner. The final task is Logistics, so the crew output is
-a day-by-day itinerary (not a flat candidates list). `run()` returns
-that as a dict with a `days` array; `run_stub()` still returns the
-slice-1.3 candidates fixture for the stub tests that pre-date the
-shape change.
+    run(destination, ...) :=
+        TripPlan = main_crew.kickoff()           # Researcher → Local Expert → Logistics
+        AuditedPlan = run_audit(TripPlan, ...)   # Python loop, up to MAX_AUDIT_PASSES
+        return AuditedPlan.model_dump()
 
-Slice 2.3 adds Budget Auditor; the output gains an audit-decision
-layer on top of `days`.
+The audit loop is Python, not LLM — each Auditor pass is its own
+`Crew(agents=[budget_auditor], tasks=[make_audit_task()])` kickoff, with
+the orchestrator deciding whether to run another pass. This:
+  - Makes MAX_AUDIT_PASSES enforceable in code (model can't violate it)
+  - Surfaces each pass as a separate Langfuse span
+  - Produces a real revision_log we can inspect later for quality experiments
+
+`run_stub()` keeps the slice-1.3 candidates fixture path for offline tests.
 """
 
 from __future__ import annotations
@@ -30,11 +33,19 @@ from llm import get_langfuse
 from local_expert import local_expert
 from logistics import logistics_planner
 from researcher import researcher
-from tasks import make_local_expertise_task, make_planning_task, make_research_task
+from schemas import AuditedPlan, TripPlan
+from tasks import (
+    make_audit_task,
+    make_local_expertise_task,
+    make_planning_task,
+    make_research_task,
+)
 
 logger = logging.getLogger(__name__)
 
 FIXTURE_PATH = Path(__file__).parent / "tests" / "fixtures" / "researcher_output.json"
+
+MAX_AUDIT_PASSES = 2
 
 DEFAULT_INPUTS = {
     "start_date": "TBD",
@@ -46,11 +57,20 @@ DEFAULT_INPUTS = {
     "constraints": "none specified",
     "user_sources": "none provided",
     "pace": "balanced",
+    "per_day_budget": "unspecified",
+    "dietary": "none",
+    "mobility": "none",
+    "no_go_list": "none",
+    "max_walking_km": "unspecified",
 }
 
 
 def _build_crew() -> Crew:
-    """Sequential crew: Researcher → Local Expert → Logistics Planner."""
+    """Sequential 3-agent crew: Researcher → Local Expert → Logistics Planner.
+
+    Budget Auditor is NOT in this crew — it runs as a Python-orchestrated
+    loop after this crew finishes. See run_audit().
+    """
     research = make_research_task()
     expertise = make_local_expertise_task(research)
     planning = make_planning_task(expertise)
@@ -64,44 +84,124 @@ def _build_crew() -> Crew:
 
 @observe(name="crew.run")
 def run(destination: str, **overrides: Any) -> dict[str, Any]:
-    """Live: kickoff the sequential crew. Returns the parsed Logistics output.
-
-    Prefers CrewAI's Pydantic-validated output (`result.pydantic`) since the
-    planning task is configured with `output_pydantic=TripPlan`. Falls back
-    to JSON parsing of `str(result)` if Pydantic output is unavailable (e.g.
-    LLM produced malformed JSON despite the schema constraint).
-    """
+    """Live: main crew → audit loop. Returns the final AuditedPlan dict."""
     inputs: dict[str, Any] = {**DEFAULT_INPUTS, "destination": destination, **overrides}
     logger.info("crew.run.start", extra={"destination": destination})
-    result = _build_crew().kickoff(inputs=inputs)
 
-    raw = str(result)
-    output: dict[str, Any] | None = None
-    if hasattr(result, "pydantic") and result.pydantic is not None:
-        output = result.pydantic.model_dump()
-    else:
-        parsed = _parse_json(raw)
-        if isinstance(parsed, list):
-            parsed = {"days": parsed}
-        if isinstance(parsed, dict):
-            output = parsed
+    # 1. Main 3-agent crew produces a TripPlan.
+    crew_result = _build_crew().kickoff(inputs=inputs)
+    plan = _extract_trip_plan(crew_result)
 
-    # Dump for offline debugging — JSON when we got a structured output,
-    # raw text otherwise. Saves a re-run if anything down-stream breaks.
+    # 2. Audit loop owns retry policy.
+    constraints = {
+        "budget_total": inputs.get("budget_total"),
+        "per_day_budget": inputs.get("per_day_budget"),
+        "dietary": inputs.get("dietary"),
+        "mobility": inputs.get("mobility"),
+        "no_go_list": inputs.get("no_go_list"),
+        "max_walking_km": inputs.get("max_walking_km"),
+    }
+    currency = str(inputs.get("currency", "USD"))
+    audited = run_audit(plan, constraints, currency=currency)
+
+    output: dict[str, Any] = audited.model_dump()
+
+    # Dump for offline debugging — saves a re-run if anything downstream breaks.
     debug_path = Path("/tmp") / "crew_last_output.json"
     with contextlib.suppress(OSError):
-        debug_path.write_text(json.dumps(output, indent=2) if output else raw)
+        debug_path.write_text(json.dumps(output, indent=2))
 
-    if output is None:
-        raise ValueError(
-            f"could not extract days from LLM output (raw saved to {debug_path}): {raw[:300]!r}..."
-        )
-
-    logger.info("crew.run.success", extra={"days": len(output.get("days") or [])})
+    logger.info(
+        "crew.run.success",
+        extra={
+            "days": len(output.get("days") or []),
+            "approved": output.get("approved"),
+            "revision_log_entries": len(output.get("revision_log") or []),
+        },
+    )
     client = get_langfuse()
     if client is not None:
         client.flush()
     return output
+
+
+@observe(name="audit.loop")
+def run_audit(
+    plan: TripPlan,
+    constraints: dict[str, Any],
+    currency: str = "USD",
+) -> AuditedPlan:
+    """Run up to MAX_AUDIT_PASSES of the Budget Auditor over `plan`.
+
+    Returns the last pass's AuditedPlan with the cumulative revision_log
+    (each entry prefixed "Pass N: "). Returns immediately if a pass returns
+    approved=true.
+    """
+    cumulative_log: list[str] = []
+    current_plan = plan
+    last_result: AuditedPlan | None = None
+
+    for pass_num in range(1, MAX_AUDIT_PASSES + 1):
+        last_result = _run_audit_pass(current_plan, constraints, currency, pass_num)
+        cumulative_log.extend(f"Pass {pass_num}: {entry}" for entry in last_result.revision_log)
+        if last_result.approved:
+            break
+        current_plan = TripPlan(days=last_result.days)
+
+    assert last_result is not None  # MAX_AUDIT_PASSES >= 1 by construction
+    return AuditedPlan(
+        approved=last_result.approved,
+        days=last_result.days,
+        per_day_costs=last_result.per_day_costs,
+        total_cost=last_result.total_cost,
+        currency=last_result.currency or currency,
+        constraints_violated=last_result.constraints_violated,
+        explanation=last_result.explanation,
+        revision_log=cumulative_log,
+    )
+
+
+@observe(name="audit.pass")
+def _run_audit_pass(
+    plan: TripPlan,
+    constraints: dict[str, Any],
+    currency: str,
+    pass_num: int,
+) -> AuditedPlan:
+    """Single Auditor LLM call. Returns the AuditedPlan for THIS pass."""
+    # Local import to avoid a researcher → tasks → budget_auditor → researcher
+    # cycle when running stub tests that only need module-level objects.
+    from budget_auditor import budget_auditor
+
+    task = make_audit_task()
+    crew = Crew(
+        agents=[budget_auditor],
+        tasks=[task],
+        process=Process.sequential,
+        verbose=False,
+    )
+    pass_inputs: dict[str, Any] = {
+        "current_plan_json": plan.model_dump_json(),
+        "currency": currency,
+        "budget_total": constraints.get("budget_total") or "unspecified",
+        "per_day_budget": constraints.get("per_day_budget") or "unspecified",
+        "dietary": constraints.get("dietary") or "none",
+        "mobility": constraints.get("mobility") or "none",
+        "no_go_list": constraints.get("no_go_list") or "none",
+        "max_walking_km": constraints.get("max_walking_km") or "unspecified",
+        "pass_num": pass_num,
+    }
+    logger.info("audit.pass.start", extra={"pass_num": pass_num})
+    result = crew.kickoff(inputs=pass_inputs)
+    if hasattr(result, "pydantic") and isinstance(result.pydantic, AuditedPlan):
+        return result.pydantic
+    # Fallback if structured output was not produced.
+    parsed = _parse_json(str(result))
+    if isinstance(parsed, dict):
+        return AuditedPlan.model_validate(parsed)
+    raise ValueError(
+        f"audit pass {pass_num}: could not extract AuditedPlan from {str(result)[:200]!r}"
+    )
 
 
 def run_stub(destination: str) -> list[dict[str, Any]]:
@@ -109,6 +209,22 @@ def run_stub(destination: str) -> list[dict[str, Any]]:
     _ = destination
     data: list[dict[str, Any]] = json.loads(FIXTURE_PATH.read_text())
     return data
+
+
+def _extract_trip_plan(crew_result: Any) -> TripPlan:
+    """Pull a TripPlan from a Crew kickoff result.
+
+    Prefers .pydantic (set when output_pydantic= matched), falls back to
+    parsing str(result) which may contain prose around the JSON.
+    """
+    if hasattr(crew_result, "pydantic") and isinstance(crew_result.pydantic, TripPlan):
+        return crew_result.pydantic
+    parsed = _parse_json(str(crew_result))
+    if isinstance(parsed, list):
+        parsed = {"days": parsed}
+    if isinstance(parsed, dict):
+        return TripPlan.model_validate(parsed)
+    raise ValueError(f"could not extract TripPlan from {str(crew_result)[:200]!r}")
 
 
 def _parse_json(raw_output: str) -> Any:

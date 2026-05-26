@@ -111,9 +111,12 @@ budget_auditor = Agent(
     goal=(
         "Review the proposed itinerary against the user's hard budget constraints "
         "and other limits (max walking distance, dietary, accessibility, no-go "
-        "list). If a constraint is violated, request specific revisions from the "
-        "responsible agent. If the plan cannot fit constraints after two revision "
-        "attempts, surface the closest feasible plan and explain the gap."
+        "list). When a constraint is violated, apply surgical revisions directly: "
+        "remove a block, swap a block for a cheaper alternative, or compress the "
+        "schedule. Return the revised plan and an honest verdict for this pass. "
+        "If revisions can't bring the plan within constraints, return approved=false "
+        "with the closest feasible plan and an explanation of which constraint "
+        "couldn't be honored and by how much."
     ),
     backstory=(
         "You are an adversarial reviewer. Your job is to break plans that don't "
@@ -123,7 +126,7 @@ budget_auditor = Agent(
         "respect that 'budget' means budget, and you'd rather present a cheaper "
         "honest plan than an expensive one wrapped in optimistic estimates."
     ),
-    allow_delegation=True,
+    allow_delegation=False,
     verbose=True,
     memory=True,
     tools=[calculator_tool, currency_convert_tool],
@@ -132,8 +135,9 @@ budget_auditor = Agent(
 
 **Behavior notes:**
 - Budget Auditor runs last in sequential mode, or as the final check in hierarchical mode.
-- Two-retry policy: if budget is exceeded, send back to Logistics with a "trim X from Day Y" instruction. Max 2 round-trips. Then surface to user.
-- Output must include a per-day cost breakdown and a total.
+- **Surgeon, not referee.** The Auditor applies its own cuts (remove/swap blocks, compress days) instead of round-tripping back to Logistics. allow_delegation=False enforces this.
+- **Orchestrator owns the loop, not the LLM.** crew.py invokes the Auditor with a fresh single-pass task up to `MAX_AUDIT_PASSES` times. If a pass returns approved=true, the orchestrator returns immediately. Otherwise that pass's revised plan feeds the next pass. After the cap, whatever the last pass produced is the final return (approved or not). The Auditor itself sees ONE pass at a time and never tries to track them. The infeasibility return is the expected output for infeasible asks, not an error.
+- Output must include a per-day cost breakdown, a total, and a revision_log describing what THIS pass cut/swapped and why. The orchestrator concatenates per-pass logs with a "Pass N: " prefix.
 
 ---
 
@@ -247,19 +251,26 @@ audit_task = Task(
         "Audit the itinerary against the user's hard constraints: "
         "total_budget={budget_total} {currency}, per_day_budget={per_day_budget}, "
         "dietary={dietary}, mobility={mobility}, no_go={no_go_list}, "
-        "max_walking_km_per_day={max_walking_km}. "
-        "If any constraint is violated, request a specific revision from the "
-        "responsible agent. Allow up to 2 revision rounds. If the plan still "
-        "doesn't fit, return the closest feasible plan with an explanation of "
-        "what was cut and why."
+        "max_walking_km_per_day={max_walking_km}.\n\n"
+        "Current itinerary to audit (JSON):\n{current_plan_json}\n\n"
+        "When any constraint is violated, apply surgical revisions directly: "
+        "remove or swap individual blocks, compress days, or cut optional stops. "
+        "Return the revised plan and your verdict for THIS pass. Do not delegate. "
+        "Do not try to run multiple passes yourself — the orchestrator re-invokes "
+        "you with your revised plan if approved=false, up to a system-level cap. "
+        "Focus on doing one good pass and reporting honestly."
     ),
     agent=budget_auditor,
-    context=[planning_task],
+    # No context= — the audit task runs outside the main Crew, with the plan
+    # passed in via the {current_plan_json} template var.
     expected_output=(
-        "JSON with: approved (bool), revisions_requested (list of revision "
-        "instructions if not approved), per_day_costs, total_cost, "
-        "constraints_violated (list, empty if approved), "
-        "explanation (string, only if approved=false after retries)."
+        "JSON with: approved (bool, true iff plan now satisfies ALL constraints), "
+        "days (array — same shape as planning_task output, with this pass's "
+        "revisions applied), per_day_costs (numbers indexed by day), total_cost "
+        "(number), currency (string), constraints_violated (list, empty if "
+        "approved=true), explanation (string, non-empty only if approved=false), "
+        "revision_log (list of human-readable strings describing what THIS pass "
+        "cut/swapped/compressed and why)."
     ),
 )
 ```
