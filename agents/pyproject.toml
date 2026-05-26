@@ -4,8 +4,14 @@ version = "0.1.0"
 description = "Trip Concierge agents: CrewAI crew (Researcher, Local Expert, Logistics, Budget Auditor)."
 requires-python = "==3.12.*"
 dependencies = [
+    "anthropic==0.104.1",
     "crewai==1.14.5",
+    "langfuse==4.6.1",
+    "litellm==1.86.1",
+    "pydantic-settings==2.10.1",
     "pytest==9.0.3",
+    "python-dotenv==1.2.2",
+    "tavily-python==0.7.24",
 ]
 
 [dependency-groups]
@@ -24,7 +30,7 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["researcher.py", "crew.py"]
+files = ["researcher.py", "crew.py", "llm.py", "tasks.py", "config.py", "tools"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

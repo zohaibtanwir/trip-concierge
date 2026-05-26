@@ -7,18 +7,18 @@ crew.kickoff() against Anthropic.
 
 from __future__ import annotations
 
-from crew import run
+from crew import run_stub
 from researcher import researcher
 
 
-def test_crew_run_returns_three_candidates() -> None:
-    result = run(destination="Goa")
+def test_crew_run_stub_returns_three_candidates() -> None:
+    result = run_stub(destination="Goa")
     assert isinstance(result, list)
     assert len(result) == 3
 
 
 def test_each_candidate_has_required_fields() -> None:
-    result = run(destination="Goa")
+    result = run_stub(destination="Goa")
     for item in result:
         assert isinstance(item.get("name"), str) and item["name"]
         assert isinstance(item.get("rationale"), str) and item["rationale"]

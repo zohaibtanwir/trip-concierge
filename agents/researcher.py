@@ -3,14 +3,14 @@
 Role / goal / backstory are copied verbatim from agents/prompts.md §1.1.
 Edit prompts.md first if you need to change them, then mirror here in
 the same commit — see .claude/rules/agent-code-style.md.
-
-Tools list is empty in this slice; slice 1.4 wires
-web_search_tool / web_scrape_tool / user_sources_search_tool.
 """
 
 from __future__ import annotations
 
 from crewai import Agent
+
+from llm import build_llm
+from tools.web_search import web_search_tool
 
 researcher = Agent(
     role="Travel Researcher",
@@ -30,6 +30,10 @@ researcher = Agent(
     ),
     allow_delegation=True,
     verbose=True,
-    memory=True,
-    tools=[],
+    # memory defaults to a CrewAI built-in that uses OpenAI embeddings.
+    # Slice 5.3 wires per-user memory with an Anthropic-or-local embedder;
+    # for now keep it off so runs don't depend on OPENAI_API_KEY.
+    memory=False,
+    tools=[web_search_tool],
+    llm=build_llm(),
 )
