@@ -99,7 +99,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 2.2: Logistics Planner agent
 
-- [ ] **Done when:** Logistics produces a day-by-day itinerary with travel times for the chosen destination. Uses a maps tool stub for now.
+- [x] **Done when:** Logistics produces a day-by-day itinerary with travel times for the chosen destination. Uses a maps tool stub for now. *(Landed as PR #12, squashed to fd3263e; Beads `trip-concierge-d7x` closed. Merged without CI green — Actions had a transient codeload.github.com 404 on `astral-sh/setup-uv` SHA; locally verified live + offline.)*
 - **Files to create:** `agents/logistics.py`, `agents/tools/maps_stub.py`
 - **Tests:** itinerary has the right number of days; each day has ordered blocks.
 
