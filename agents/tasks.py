@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from crewai import Task
 
+from budget_auditor import budget_auditor
 from local_expert import local_expert
 from logistics import logistics_planner
 from researcher import researcher
-from schemas import TripPlan
+from schemas import AuditedPlan, TripPlan
 
 
 def make_research_task() -> Task:
@@ -82,4 +83,38 @@ def make_planning_task(expertise: Task) -> Task:
         # CrewAI enforces this schema on the final output: the LLM is forced to
         # return JSON matching TripPlan, no prose preamble.
         output_pydantic=TripPlan,
+    )
+
+
+def make_audit_task() -> Task:
+    """One pass of the audit loop. Invoked outside the main Crew — the plan
+    to audit comes in via the {current_plan_json} template var, not via
+    CrewAI's context= mechanism. Description + expected_output are verbatim
+    from agents/prompts.md §3.4 (post slice-2.3 update).
+    """
+    return Task(
+        description=(
+            "Audit the itinerary against the user's hard constraints: "
+            "total_budget={budget_total} {currency}, per_day_budget={per_day_budget}, "
+            "dietary={dietary}, mobility={mobility}, no_go={no_go_list}, "
+            "max_walking_km_per_day={max_walking_km}.\n\n"
+            "Current itinerary to audit (JSON):\n{current_plan_json}\n\n"
+            "When any constraint is violated, apply surgical revisions directly: "
+            "remove or swap individual blocks, compress days, or cut optional stops. "
+            "Return the revised plan and your verdict for THIS pass. Do not delegate. "
+            "Do not try to run multiple passes yourself — the orchestrator re-invokes "
+            "you with your revised plan if approved=false, up to a system-level cap. "
+            "Focus on doing one good pass and reporting honestly."
+        ),
+        agent=budget_auditor,
+        expected_output=(
+            "JSON with: approved (bool, true iff plan now satisfies ALL constraints), "
+            "days (array — same shape as planning_task output, with this pass's "
+            "revisions applied), per_day_costs (numbers indexed by day), total_cost "
+            "(number), currency (string), constraints_violated (list, empty if "
+            "approved=true), explanation (string, non-empty only if approved=false), "
+            "revision_log (list of human-readable strings describing what THIS pass "
+            "cut/swapped/compressed and why)."
+        ),
+        output_pydantic=AuditedPlan,
     )
