@@ -81,7 +81,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 1.4: Wire LLM into Researcher
 
-- [ ] **Done when:** Researcher actually calls Claude Sonnet 4 via Anthropic SDK and returns 3 real candidate destinations for a real input. Langfuse trace appears.
+- [x] **Done when:** Researcher actually calls Claude Sonnet 4 via Anthropic SDK and returns 3 real candidate destinations for a real input. Langfuse trace appears. *(Landed as PR #9, squashed to 81164cd; Beads `trip-concierge-1ex` closed. Live test verified: real Goan venues with Tavily-sourced URLs; trace `researcher.run` id `c166622d25c76f` in Langfuse cloud.)*
 - **Files to create:**
   - `agents/tools/web_search.py` (Tavily wrapper)
   - `backend/app/config.py` (centralized env reading)
