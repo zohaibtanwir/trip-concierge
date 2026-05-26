@@ -30,7 +30,7 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["researcher.py", "crew.py", "llm.py", "tasks.py", "config.py", "tools"]
+files = ["researcher.py", "local_expert.py", "crew.py", "llm.py", "tasks.py", "config.py", "tools"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

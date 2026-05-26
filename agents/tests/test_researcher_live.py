@@ -26,7 +26,9 @@ def test_researcher_kickoff_returns_candidates() -> None:
     )
 
     assert isinstance(result, list), f"expected list, got {type(result).__name__}"
-    assert len(result) >= 3, f"expected at least 3 candidates, got {len(result)}"
+    # Local Expert narrows; >=1 is the lower bound. Researcher proposes 3-5
+    # per category (3 categories), Local Expert keeps a subset.
+    assert len(result) >= 1, f"expected at least 1 candidate, got {len(result)}"
 
     for item in result:
         assert isinstance(item, dict)
@@ -39,3 +41,15 @@ def test_researcher_kickoff_returns_candidates() -> None:
         assert isinstance(urls, list) and len(urls) >= 1, (
             f"every candidate must include at least one source URL: {item!r}"
         )
+
+    # Local Expert's contract (prompts.md §1.2 + §3.2): every chosen item
+    # must carry a why_this_not_that rationale. Use a tolerant accessor —
+    # the LLM sometimes uses snake_case, sometimes spaces or camelCase.
+    def _has_why(item: dict[str, object]) -> bool:
+        keys = {k.lower().replace(" ", "_").replace("-", "_") for k in item}
+        return "why_this_not_that" in keys or "whythisnotthat" in keys
+
+    assert any(_has_why(item) for item in result), (
+        "no candidate has a why_this_not_that field; Local Expert may not have run. "
+        f"sample item keys: {list(result[0].keys())}"
+    )
