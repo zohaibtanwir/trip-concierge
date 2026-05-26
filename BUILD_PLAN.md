@@ -93,7 +93,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 2.1: Local Expert agent
 
-- [ ] **Done when:** Local Expert runs after Researcher in sequential mode, narrows 3 destinations to 1 with rationale.
+- [x] **Done when:** Local Expert runs after Researcher in sequential mode, narrows 3 destinations to 1 with rationale. *(Landed as PR #10, squashed to a36d2e5; Beads `trip-concierge-dkw` closed. Live test verified `why_this_not_that` field appears.)*
 - **Files to create:** `agents/local_expert.py`
 - **Tests:** sequential crew run produces both agents' outputs in order.
 
