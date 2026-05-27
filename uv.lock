@@ -7,6 +7,7 @@ members = [
     "trip-concierge",
     "trip-concierge-agents",
     "trip-concierge-backend",
+    "trip-concierge-mcp-server",
 ]
 
 [[package]]
@@ -2378,6 +2379,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyjwt" },
     { name = "pytest" },
     { name = "python-dotenv" },
     { name = "sqlalchemy" },
@@ -2401,11 +2403,43 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.4" },
     { name = "pydantic", specifier = "==2.12.5" },
     { name = "pydantic-settings", specifier = "==2.10.1" },
+    { name = "pyjwt", specifier = "==2.13.0" },
     { name = "pytest", specifier = "==9.0.3" },
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "sqlalchemy", specifier = "==2.0.50" },
     { name = "trip-concierge-agents", editable = "agents" },
     { name = "uvicorn", specifier = "==0.48.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = "==2.1.0" },
+    { name = "pytest-asyncio", specifier = "==1.4.0" },
+    { name = "ruff", specifier = "==0.15.14" },
+]
+
+[[package]]
+name = "trip-concierge-mcp-server"
+version = "0.1.0"
+source = { editable = "mcp_server" }
+dependencies = [
+    { name = "mcp" },
+    { name = "pytest" },
+    { name = "trip-concierge-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mcp", specifier = "==1.26.0" },
+    { name = "pytest", specifier = "==9.0.3" },
+    { name = "trip-concierge-agents", editable = "agents" },
 ]
 
 [package.metadata.requires-dev]

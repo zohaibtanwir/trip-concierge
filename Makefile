@@ -7,8 +7,7 @@ DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:5432/trip_conci
 REDIS_URL ?= redis://localhost:6379
 
 setup:
-	uv sync                  # workspace sync — provisions backend + agents in one shot
-	cd mcp_server && uv sync # not yet a workspace member (joins in slice 3.1)
+	uv sync                  # workspace sync — provisions backend + agents + mcp_server in one shot
 	cd web && pnpm install
 	$(MAKE) hooks
 
@@ -38,7 +37,7 @@ test:
 
 check:
 	cd backend && uv run ruff check . && uv run mypy app
-	cd mcp_server && uv run ruff check . && uv run mypy server.py
+	cd mcp_server && uv run ruff check . && uv run mypy src/trip_mcp
 	cd agents && uv run ruff check . && uv run mypy src/trip_agents
 	cd web && pnpm exec biome check . && pnpm exec tsc --noEmit
 

@@ -168,13 +168,12 @@ The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic —
 
 ### Slice 3.1: MCP server skeleton with auth
 
-- [ ] **Done when:** Claude Desktop can connect to the MCP server. First call returns a magic-link URL. Clicking it issues a token. Subsequent calls use the token.
-- **Files to create:**
-  - `mcp_server/server.py`
-  - `mcp_server/auth.py`
-  - `mcp_server/tools/_base.py` (token verification decorator)
-  - Magic-link route in `backend/app/routes/auth.py`
-- **Tests:** unit tests for token issuance and verification. Manual test against Claude Desktop documented in `mcp_server/README.md`.
+- [ ] **Done when:** Claude Desktop can connect to the MCP server. First call (with no token on disk) returns dev-CLI instructions for obtaining a token. Once the token is stored at `~/.config/trip-concierge/token`, subsequent calls authenticate via the `x-tc-token` header. The production clicked-link / magic-link flow is **deferred to slice 4.1**; 3.1 ships dev-only auth via the `tc-issue-mcp-token` CLI to unblock 3.2-3.5.
+- **Files created (refactor commit):** `mcp_server/src/trip_mcp/` (src-layout move, joins uv workspace).
+- **Files created (auth commit):**
+  - Backend: `app/services/mcp_tokens.py` (JWT issue/verify), `app/auth/dependencies.py` (`require_mcp_token`), `app/routes/auth.py` (`GET /auth/mcp/me`), `app/cli/issue_mcp_token.py` (CLI).
+  - MCP: `src/trip_mcp/{config,auth,http_client}.py`, `src/trip_mcp/tools/_base.py` (`@requires_auth`), `README.md` (manual Claude Desktop recipe).
+- **Tests:** 10 backend (JWT roundtrip + bad-sig + expired + malformed + CLI + 3× route auth states), 6 mcp_server (4 storage + 2 tool-base). Manual test against Claude Desktop documented in `mcp_server/README.md`.
 
 ### Slice 3.2: `create_trip` MCP tool
 

@@ -45,6 +45,14 @@ class Settings(BaseSettings):
         validation_alias="REDIS_URL",
     )
 
+    # MCP token signing secret. Dev default is fine for local + CI; production
+    # MUST override via TC_MCP_TOKEN_SECRET env. Compromise of this secret =
+    # boot every active MCP session via rotation (the v1.0 revocation).
+    tc_mcp_token_secret: str = Field(
+        default="dev-only-do-not-use-in-prod",
+        validation_alias="TC_MCP_TOKEN_SECRET",
+    )
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias="LOG_LEVEL"
     )
