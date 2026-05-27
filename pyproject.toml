@@ -3,8 +3,8 @@
 # them resolve cross-member dependencies via path (e.g. backend imports
 # trip_agents.schemas without going through PyPI).
 #
-# mcp_server is intentionally NOT a member yet — it joins in slice 3.1 when
-# it gets a proper installable package layout.
+# mcp_server joined the workspace in slice 3.1, src-layout per the same
+# decision agents took in slice 2.5a.
 
 [project]
 name = "trip-concierge"
@@ -12,4 +12,4 @@ version = "0.1.0"
 requires-python = "==3.12.*"
 
 [tool.uv.workspace]
-members = ["backend", "agents"]
+members = ["backend", "agents", "mcp_server"]
