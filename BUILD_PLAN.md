@@ -138,7 +138,7 @@ The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic —
 
 #### Slice 2.5b: Redis + arq job queue for crew runs
 
-- [ ] **Done when:**
+- [x] **Done when:** *(Landed as PR #16 squashed to 56feeff, across three commits: b05096a queue infrastructure, 6268aba post-housekeeping, 075e152 backend POST /trips/{id}/plan wiring. Beads `trip-concierge-odc` closed. Real `_is_retryable` HTTPStatusError money-leak bug caught by pure-function test before commit; real `_REPO_ROOT` silent breakage from slice-2.5a src-layout move fixed incidentally. Observations recorded in `experiments/01-langfuse.md`.)*
   - `redis` service added to `docker-compose.yml`.
   - `arq` pinned exact in both `backend/` and `agents/`.
   - `POST /trips/{id}/plan` on backend enqueues an arq job, returns **202 Accepted** with `{job_id, status_url}` in **< 1 second** (the user-facing latency target).
