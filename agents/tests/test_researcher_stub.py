@@ -7,8 +7,8 @@ crew.kickoff() against Anthropic.
 
 from __future__ import annotations
 
-from crew import run_stub
-from researcher import researcher
+from trip_agents.crew import run_stub
+from trip_agents.researcher import researcher
 
 
 def test_crew_run_stub_returns_three_candidates() -> None:

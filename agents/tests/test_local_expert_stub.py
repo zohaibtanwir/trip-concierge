@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from crewai import Process
 
-from crew import _build_crew
-from local_expert import local_expert
-from researcher import researcher
+from trip_agents.crew import _build_crew
+from trip_agents.local_expert import local_expert
+from trip_agents.researcher import researcher
 
 
 def test_local_expert_matches_prompts_md() -> None:

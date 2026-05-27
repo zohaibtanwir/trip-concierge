@@ -20,7 +20,7 @@ import pytest
 
 @pytest.mark.live
 def test_full_pipeline_returns_audited_itinerary() -> None:
-    from crew import run
+    from trip_agents.crew import run
 
     result = run(
         destination="Goa, India",

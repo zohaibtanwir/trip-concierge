@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import crew as crew_mod
-from schemas import AuditedPlan, Block, Day, TripPlan
+import trip_agents.crew as crew_mod
+from trip_agents.schemas import AuditedPlan, Block, Day, TripPlan
 
 
 def _plan() -> TripPlan:

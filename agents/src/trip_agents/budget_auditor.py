@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from crewai import Agent
 
-from llm import build_llm
-from tools.calculator import calculator_tool
-from tools.currency_convert import currency_convert_tool
+from trip_agents.llm import build_llm
+from trip_agents.tools.calculator import calculator_tool
+from trip_agents.tools.currency_convert import currency_convert_tool
 
 budget_auditor = Agent(
     role="Budget Auditor",

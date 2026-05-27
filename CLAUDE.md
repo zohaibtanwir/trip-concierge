@@ -143,6 +143,8 @@ trip-concierge/
 
 **Why `agents` is both a workspace member AND a separate service:** the workspace is a dev-time convenience (shared Pydantic types, single `uv sync`, type-checking sees across projects). The service split is a runtime requirement — the 4-agent crew takes ~9 minutes per kickoff and would time out any HTTP gateway if it ran in the backend's request thread. The two layers solve different problems; see PRD §2.1 and the Slice 2.5a / 2.5b / 2.5c spec in BUILD_PLAN.md.
 
+**Two parallel workspace systems.** Python uses uv workspace at the repo root (root `pyproject.toml` lists members: `backend`, `agents`; `mcp_server` joins in slice 3.1). Node uses pnpm inside `web/` standalone. They don't know about each other — there's no top-level "monorepo tool" wrapping both.
+
 ---
 
 ## Commands

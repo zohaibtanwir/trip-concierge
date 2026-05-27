@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from crewai import Task
 
-from budget_auditor import budget_auditor
-from local_expert import local_expert
-from logistics import logistics_planner
-from researcher import researcher
-from schemas import AuditedPlan, TripPlan
+from trip_agents.budget_auditor import budget_auditor
+from trip_agents.local_expert import local_expert
+from trip_agents.logistics import logistics_planner
+from trip_agents.researcher import researcher
+from trip_agents.schemas import AuditedPlan, TripPlan
 
 
 def make_research_task() -> Task:

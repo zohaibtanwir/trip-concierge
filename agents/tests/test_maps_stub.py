@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from tools.maps_stub import maps_stub_tool
+from trip_agents.tools.maps_stub import maps_stub_tool
 
 
 def test_returns_expected_fields() -> None:

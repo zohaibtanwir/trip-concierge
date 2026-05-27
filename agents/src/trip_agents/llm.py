@@ -18,7 +18,7 @@ import os
 from crewai import LLM
 from langfuse import Langfuse
 
-from config import settings
+from trip_agents.config import settings
 
 logger = logging.getLogger(__name__)
 

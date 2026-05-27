@@ -1,12 +1,11 @@
-.PHONY: setup dev test check hooks db.up db.down db.migrate db.reset
+.PHONY: setup dev agents.dev test check hooks db.up db.down db.migrate db.reset
 
 # Postgres URL used by `make db.*` targets. Override with `DATABASE_URL=...`.
 DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:5432/trip_concierge
 
 setup:
-	cd backend && uv sync
-	cd mcp_server && uv sync
-	cd agents && uv sync
+	uv sync                  # workspace sync — provisions backend + agents in one shot
+	cd mcp_server && uv sync # not yet a workspace member (joins in slice 3.1)
 	cd web && pnpm install
 	$(MAKE) hooks
 
@@ -14,7 +13,12 @@ hooks:
 	bash scripts/install-hooks.sh
 
 dev:
-	@echo "TODO: phase 1+ — wire backend uvicorn, web pnpm dev, mcp server concurrently"
+	@echo "TODO: phase 2.5b+ — wire backend uvicorn, agents service, web pnpm dev, mcp concurrently"
+
+# Run the agents FastAPI service for dev. Slice 2.5b adds the arq worker
+# alongside it; for now this is just the sync HTTP surface.
+agents.dev:
+	cd agents && uv run uvicorn trip_agents.service:app --port 8001 --reload
 
 test:
 	cd backend && uv run pytest
@@ -25,7 +29,7 @@ test:
 check:
 	cd backend && uv run ruff check . && uv run mypy app
 	cd mcp_server && uv run ruff check . && uv run mypy server.py
-	cd agents && uv run ruff check . && uv run mypy researcher.py local_expert.py logistics.py budget_auditor.py crew.py llm.py tasks.py config.py schemas.py tools
+	cd agents && uv run ruff check . && uv run mypy src/trip_agents
 	cd web && pnpm exec biome check . && pnpm exec tsc --noEmit
 
 db.up:
