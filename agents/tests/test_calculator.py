@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tools.calculator import calculator_tool
+from trip_agents.tools.calculator import calculator_tool
 
 
 def test_basic_arithmetic() -> None:

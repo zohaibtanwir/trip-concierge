@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from tools.currency_convert import currency_convert_tool
+from trip_agents.tools.currency_convert import currency_convert_tool
 
 
 def test_returns_expected_shape() -> None:

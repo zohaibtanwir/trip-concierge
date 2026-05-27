@@ -29,12 +29,12 @@ from typing import Any
 from crewai import Crew, Process
 from langfuse import observe
 
-from llm import get_langfuse
-from local_expert import local_expert
-from logistics import logistics_planner
-from researcher import researcher
-from schemas import AuditedPlan, TripPlan
-from tasks import (
+from trip_agents.llm import get_langfuse
+from trip_agents.local_expert import local_expert
+from trip_agents.logistics import logistics_planner
+from trip_agents.researcher import researcher
+from trip_agents.schemas import AuditedPlan, TripPlan
+from trip_agents.tasks import (
     make_audit_task,
     make_local_expertise_task,
     make_planning_task,
@@ -43,7 +43,11 @@ from tasks import (
 
 logger = logging.getLogger(__name__)
 
-FIXTURE_PATH = Path(__file__).parent / "tests" / "fixtures" / "researcher_output.json"
+# Fixture lives at agents/tests/fixtures/, three levels up from this file
+# (src/trip_agents/crew.py → agents/).
+FIXTURE_PATH = (
+    Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "researcher_output.json"
+)
 
 MAX_AUDIT_PASSES = 2
 
@@ -171,7 +175,7 @@ def _run_audit_pass(
     """Single Auditor LLM call. Returns the AuditedPlan for THIS pass."""
     # Local import to avoid a researcher → tasks → budget_auditor → researcher
     # cycle when running stub tests that only need module-level objects.
-    from budget_auditor import budget_auditor
+    from trip_agents.budget_auditor import budget_auditor
 
     task = make_audit_task()
     crew = Crew(

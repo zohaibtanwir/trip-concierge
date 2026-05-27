@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from crewai import Agent
 
-from llm import build_llm
-from tools.web_search import web_search_tool
+from trip_agents.llm import build_llm
+from trip_agents.tools.web_search import web_search_tool
 
 researcher = Agent(
     role="Travel Researcher",

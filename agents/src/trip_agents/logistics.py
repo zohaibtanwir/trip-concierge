@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from crewai import Agent
 
-from llm import build_llm
-from tools.maps_stub import maps_stub_tool
+from trip_agents.llm import build_llm
+from trip_agents.tools.maps_stub import maps_stub_tool
 
 logistics_planner = Agent(
     role="Logistics Planner",

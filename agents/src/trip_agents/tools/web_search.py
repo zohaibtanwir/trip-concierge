@@ -15,7 +15,7 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 from tavily import TavilyClient  # type: ignore[import-untyped]  # no py.typed
 
-from config import settings
+from trip_agents.config import settings
 
 logger = logging.getLogger(__name__)
 

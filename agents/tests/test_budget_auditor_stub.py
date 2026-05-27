@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from budget_auditor import budget_auditor
-from crew import _build_crew
+from trip_agents.budget_auditor import budget_auditor
+from trip_agents.crew import _build_crew
 
 
 def test_budget_auditor_matches_prompts_md() -> None:

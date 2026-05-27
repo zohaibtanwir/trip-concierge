@@ -25,7 +25,7 @@ test:
 check:
 	cd backend && uv run ruff check . && uv run mypy app
 	cd mcp_server && uv run ruff check . && uv run mypy server.py
-	cd agents && uv run ruff check . && uv run mypy researcher.py local_expert.py logistics.py budget_auditor.py crew.py llm.py tasks.py config.py schemas.py tools
+	cd agents && uv run ruff check . && uv run mypy src/trip_agents
 	cd web && pnpm exec biome check . && pnpm exec tsc --noEmit
 
 db.up:
