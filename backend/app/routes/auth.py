@@ -34,6 +34,15 @@ from app.auth.dependencies import require_mcp_token
 from app.config import settings
 from app.models.user import User
 
+# Rate limit constants — imported by middleware in slice 4.1.
+# Format compatible with slowapi (per-endpoint string spec).
+# Reasoning for each value lives in the module docstring above.
+RATE_LIMIT_CHALLENGE = "5/minute"  # POST /auth/mcp/challenge
+RATE_LIMIT_POLL_PER_CODE = "1/2seconds"  # GET /auth/mcp/poll/{code}, max 300/code lifetime
+RATE_LIMIT_REDEEM = "5/minute"  # POST /auth/mcp/redeem (slice 4.1)
+RATE_LIMIT_EMAIL = "3/hour"  # email send per IP (slice 4.1)
+
+
 router = APIRouter(prefix="/auth/mcp", tags=["auth"])
 
 
