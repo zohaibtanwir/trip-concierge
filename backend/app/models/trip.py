@@ -1,7 +1,7 @@
 """Trip model — top-level container owned by a user.
 
-Fields mirror PRD §2.3. Days/Blocks/Sources/AgentRuns get their own
-models in Slice 2.4 once the crew can produce them.
+Fields mirror PRD §2.3. Days/Blocks/Sources live in slice 2.4 models;
+JobRun (one row per crew-planning job) lives in slice 2.5b's model.
 """
 
 from __future__ import annotations

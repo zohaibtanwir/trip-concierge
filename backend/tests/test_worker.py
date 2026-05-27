@@ -1,0 +1,228 @@
+"""Direct-call tests for trip_agents.worker.plan_trip.
+
+No real queue, no real LLM, no real Redis. We call the task function
+directly with a fake `ctx`, mock crew.run + persist_audited_plan + the
+DB session, and verify the four terminal states behave correctly:
+
+1. success → JobRun row written with status=succeeded, agent_summary
+   populated by step_callback events
+2. fatal error → JobRun row written with status=failed, error captured;
+   FatalJobError is raised
+3. retryable error (httpx 429) → no JobRun row written (arq will retry);
+   RetryableJobError is raised
+4. cancellation → JobRun row written with status=cancelled;
+   CancelledError re-raised so arq marks the job done
+
+The test patches `trip_agents.crew.run` — same path the agents service
+patches in slice 2.5a's integration test. Get it wrong and the real
+LLM gets called. The assertion `crew_mock.called` is the load-bearing
+guard.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import httpx
+import pytest
+from trip_agents.errors import FatalJobError, RetryableJobError
+
+from app import worker
+
+
+def _ctx(job_id: str = "deadbeef") -> dict[str, Any]:
+    return {"job_id": job_id}
+
+
+def _request() -> dict[str, Any]:
+    return {
+        "destination": "Goa, India",
+        "start_date": "2026-07-01",
+        "end_date": "2026-07-03",
+        "budget_total": 40000,
+        "currency": "INR",
+        "vibe": "chill",
+        "group_size": 2,
+        "pace": "balanced",
+    }
+
+
+def _audited_plan_dict() -> dict[str, Any]:
+    return {
+        "approved": True,
+        "currency": "INR",
+        "total_cost": 25000.0,
+        "per_day_costs": [25000.0],
+        "constraints_violated": [],
+        "explanation": "",
+        "revision_log": ["Pass 1: nothing to revise"],
+        "days": [
+            {
+                "day_number": 1,
+                "date": "2026-07-01",
+                "summary": "Test",
+                "blocks": [
+                    {
+                        "order": 1,
+                        "type": "venue",
+                        "venue_name": "Test Venue",
+                        "start_time": "09:00",
+                        "duration_minutes": 60,
+                        "est_cost": 25000.0,
+                        "currency": "INR",
+                        "source_urls": ["https://example.com"],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+class _FakeStep:
+    """Mimics CrewAI's step-callback object shape: .agent.role + .output."""
+
+    def __init__(self, role: str, output: str) -> None:
+        self.agent = type("Agent", (), {"role": role})()
+        self.output = output
+
+
+def _make_crew_run_that_fires_callback(output: dict[str, Any]):
+    """Build a fake crew.run that invokes the step_callback before returning."""
+
+    def _crew_run(destination: str, step_callback=None, **kwargs):  # noqa: ANN001
+        if step_callback is not None:
+            step_callback(_FakeStep("Travel Researcher", "found candidates"))
+            step_callback(_FakeStep("Local Expert", "narrowed picks"))
+            step_callback(_FakeStep("Logistics Planner", "built day-by-day plan"))
+        return output
+
+    return _crew_run
+
+
+def _patch_db_writes():
+    """Patch get_session + persist_audited_plan so tests don't hit Postgres.
+
+    Returns a MagicMock for the JobRun rows that get added to the session,
+    so each test can assert what status/error/agent_summary was written.
+    """
+    session_mock = MagicMock()
+
+    def _session_iter():
+        yield session_mock
+
+    return session_mock, _session_iter
+
+
+@pytest.mark.asyncio
+async def test_success_writes_job_run_with_agent_summary() -> None:
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(side_effect=_make_crew_run_that_fires_callback(_audited_plan_dict()))
+
+    with (
+        patch.object(worker.crew_module, "run", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+        patch("app.worker.persist_audited_plan") as persist_mock,
+    ):
+        result = await worker.plan_trip(_ctx(), str(uuid.uuid4()), _request())
+
+    assert crew_mock.called, (
+        "crew.run was not invoked — patch target may be wrong (real LLM could be called)"
+    )
+    assert persist_mock.called, "persist_audited_plan should run on the success path"
+
+    # Worker called session_mock.add(JobRun(...)) exactly twice: once never —
+    # actually once on the success path. Inspect the JobRun argument.
+    added = [c.args[0] for c in session_mock.add.call_args_list]
+    assert len(added) == 1
+    job_run = added[0]
+    assert job_run.status == "succeeded"
+    assert job_run.error is None
+    # step_callback fired three times for the three crew agents.
+    assert len(job_run.agent_summary) == 3
+    roles = [e.get("agent_role") for e in job_run.agent_summary]
+    assert "Travel Researcher" in roles
+    assert "Logistics Planner" in roles
+
+    assert result["status"] == "succeeded"
+    assert result["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_fatal_error_writes_failed_job_run() -> None:
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(side_effect=ValueError("unparseable LLM output"))
+
+    with (
+        patch.object(worker.crew_module, "run", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+        pytest.raises(FatalJobError, match="unparseable LLM output"),
+    ):
+        await worker.plan_trip(_ctx(), str(uuid.uuid4()), _request())
+
+    added = [c.args[0] for c in session_mock.add.call_args_list]
+    assert len(added) == 1
+    job_run = added[0]
+    assert job_run.status == "failed"
+    assert "unparseable LLM output" in (job_run.error or "")
+
+
+@pytest.mark.asyncio
+async def test_retryable_error_writes_no_job_run() -> None:
+    """httpx 429 → RetryableJobError; arq will retry; no JobRun yet."""
+    session_mock, session_iter = _patch_db_writes()
+    response = httpx.Response(429, request=httpx.Request("GET", "https://api.anthropic.com"))
+    crew_mock = MagicMock(
+        side_effect=httpx.HTTPStatusError("429", request=response.request, response=response)
+    )
+
+    with (
+        patch.object(worker.crew_module, "run", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+        pytest.raises(RetryableJobError),
+    ):
+        await worker.plan_trip(_ctx(), str(uuid.uuid4()), _request())
+
+    assert not session_mock.add.called, (
+        "Retryable errors must not write JobRun — arq will retry; "
+        "the row gets written only on a terminal outcome."
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancellation_writes_cancelled_job_run() -> None:
+    """asyncio.CancelledError → JobRun status=cancelled, re-raised for arq."""
+    import asyncio
+
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(side_effect=asyncio.CancelledError())
+
+    with (
+        patch.object(worker.crew_module, "run", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await worker.plan_trip(_ctx(), str(uuid.uuid4()), _request())
+
+    added = [c.args[0] for c in session_mock.add.call_args_list]
+    assert len(added) == 1
+    assert added[0].status == "cancelled"
+    assert "cancelled" in (added[0].error or "").lower()
+
+
+def test_is_retryable_classifies_429_and_5xx() -> None:
+    """Pure-function check on the retry classifier."""
+    request = httpx.Request("GET", "https://x.test")
+
+    def _err(code: int) -> httpx.HTTPStatusError:
+        return httpx.HTTPStatusError(
+            str(code), request=request, response=httpx.Response(code, request=request)
+        )
+
+    assert worker._is_retryable(_err(429))
+    assert worker._is_retryable(_err(503))
+    assert not worker._is_retryable(_err(400))
+    assert not worker._is_retryable(_err(404))
+    assert not worker._is_retryable(ValueError("nope"))
+    assert worker._is_retryable(httpx.ConnectError("network down"))

@@ -38,9 +38,20 @@ jobs:
           --health-interval 3s
           --health-timeout 3s
           --health-retries 10
+      # Same Redis pin as docker-compose.yml so dev/CI run byte-identical images.
+      redis:
+        image: redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/trip_concierge
       TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/trip_concierge_test
+      REDIS_URL: redis://localhost:6379
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

@@ -5,6 +5,7 @@ description = "Trip Concierge agents: CrewAI crew (Researcher, Local Expert, Log
 requires-python = "==3.12.*"
 dependencies = [
     "anthropic==0.104.1",
+    "arq==0.28.0",
     "crewai==1.14.5",
     "fastapi==0.136.3",
     "langfuse==4.6.1",
@@ -18,7 +19,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "fakeredis==2.32.0",
     "mypy==2.1.0",
+    "pytest-asyncio==1.4.0",
     "ruff==0.15.14",
 ]
 
@@ -44,3 +47,5 @@ files = ["src/trip_agents"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

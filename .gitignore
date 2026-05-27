@@ -4,6 +4,9 @@
 .beads-credential-key
 .beads/embeddeddolt/
 
+# Experiment workstream notes — local-only, never committed.
+experiments/
+
 # Python
 __pycache__/
 *.py[cod]

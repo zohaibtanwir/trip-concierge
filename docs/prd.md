@@ -86,7 +86,7 @@ The 2026 AI travel planner market is saturated with itinerary generators that al
                               │ Postgres + pgvec │
                               │ (trips, days,    │
                               │  blocks, sources,│
-                              │  agent_runs)     │
+                              │  job_runs)       │
                               └──────────────────┘
                                   ▲
                                   │ persists results
@@ -160,9 +160,20 @@ Source (citation backing a recommendation)
   id, block_id, url, source_type (reddit|maps|blog|tourism_board|user),
   excerpt, confidence_score, fetched_at
 
-AgentRun
-  id, trip_id, agent_name, task_name, input, output,
-  tokens_used, cost, duration_ms, created_at
+JobRun (one row per crew-planning job — succeeded / failed / cancelled)
+  id, job_id, trip_id, status (succeeded|failed|cancelled),
+  error (nullable), agent_summary (JSONB — per-agent events captured
+  via CrewAI step_callback, best-effort on failure),
+  total_tokens, total_cost, total_duration_ms,
+  created_at, started_at, finished_at
+
+  Note: v1.0 design is one row per job, not per agent. Originally
+  sketched as per-agent rows in the slice-2.4 spec; revised in slice
+  2.5b after the queue/worker architecture review — getting per-agent
+  state on partial failure requires reconstructing from Langfuse and
+  the partial-write complexity isn't worth it. Per-agent rows are a
+  v2.0 question if we ever need finer grain. The agent_summary JSONB
+  column gives us the "which agent failed?" answer for free.
 
 UserSource (BYO research)
   id, user_id, trip_id, url_or_text, parsed_content,
@@ -276,7 +287,7 @@ Four agents, defined declaratively (role, goal, backstory, tools, memory enabled
 - [ ] PWA: tap "Regenerate" on a single Block — replaces only that Block with an alternative honoring the same constraints.
 - [ ] PWA: tap "Regenerate Day" — re-plans only that day; locked Blocks are preserved.
 - [ ] MCP `refine_trip` accepts free-text instructions ("make Day 2 chiller", "swap the museum for something outdoor") and routes through the hierarchical process.
-- [ ] All edits create an immutable AgentRun record; the previous version of the day is recoverable.
+- [ ] All edits create an immutable JobRun record; the previous version of the day is recoverable.
 - [ ] "Undo last change" is one tap from the day view header.
 
 ---
@@ -319,7 +330,7 @@ Four agents, defined declaratively (role, goal, backstory, tools, memory enabled
 **Acceptance criteria:**
 - [ ] PWA: collapsible "How this plan was made" panel at the top of each day, listing each agent's contribution in plain English ("Researcher found 12 options, Local Expert narrowed to 4, Budget Auditor cut 1 over budget").
 - [ ] MCP: same content returned as structured `agent_activity` array on `get_trip`.
-- [ ] AgentRun records are persisted and queryable for debugging.
+- [ ] JobRun records are persisted and queryable for debugging.
 - [ ] Each step shows duration and is tappable to see the agent's reasoning (full text).
 
 ---
@@ -556,4 +567,4 @@ Features de-scoped from v1.0, prioritized for v2.0.
 - **MCP (Model Context Protocol):** An open protocol that lets AI chat applications (Claude, ChatGPT) call external tools and data sources.
 - **PWA (Progressive Web App):** A web application that behaves like a native mobile app — installable, offline-capable, push-enabled.
 - **Source:** A citation record backing a recommendation (a URL, an excerpt, a confidence score).
-- **Trip:** The top-level object owning Days, Blocks, Sources, Constraints, and AgentRuns.
+- **Trip:** The top-level object owning Days, Blocks, Sources, Constraints, and JobRuns.

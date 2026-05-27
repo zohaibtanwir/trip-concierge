@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     langfuse_public_key: str = Field(default="", validation_alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str = Field(default="", validation_alias="LANGFUSE_SECRET_KEY")
 
+    # Used by the arq client in slice 2.5b's POST /trips/{id}/plan handler to
+    # enqueue jobs. Worker side reads the same URL from agents/config.py.
+    redis_url: str = Field(
+        default="redis://localhost:6379",
+        validation_alias="REDIS_URL",
+    )
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias="LOG_LEVEL"
     )

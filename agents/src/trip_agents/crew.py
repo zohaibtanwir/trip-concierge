@@ -23,6 +23,7 @@ import contextlib
 import json
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -69,31 +70,46 @@ DEFAULT_INPUTS = {
 }
 
 
-def _build_crew() -> Crew:
+def _build_crew(step_callback: Callable[[Any], None] | None = None) -> Crew:
     """Sequential 3-agent crew: Researcher → Local Expert → Logistics Planner.
 
     Budget Auditor is NOT in this crew — it runs as a Python-orchestrated
     loop after this crew finishes. See run_audit().
+
+    `step_callback` is plumbed through to CrewAI so the worker can collect
+    per-agent step events for the JobRun.agent_summary column. None is fine
+    when nothing's listening.
     """
     research = make_research_task()
     expertise = make_local_expertise_task(research)
     planning = make_planning_task(expertise)
-    return Crew(
-        agents=[researcher, local_expert, logistics_planner],
-        tasks=[research, expertise, planning],
-        process=Process.sequential,
-        verbose=False,
-    )
+    kwargs: dict[str, Any] = {
+        "agents": [researcher, local_expert, logistics_planner],
+        "tasks": [research, expertise, planning],
+        "process": Process.sequential,
+        "verbose": False,
+    }
+    if step_callback is not None:
+        kwargs["step_callback"] = step_callback
+    return Crew(**kwargs)
 
 
 @observe(name="crew.run")
-def run(destination: str, **overrides: Any) -> dict[str, Any]:
-    """Live: main crew → audit loop. Returns the final AuditedPlan dict."""
+def run(
+    destination: str,
+    step_callback: Callable[[Any], None] | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Live: main crew → audit loop. Returns the final AuditedPlan dict.
+
+    `step_callback` is forwarded to the main crew and each audit pass so
+    every agent step the worker observes lands in JobRun.agent_summary.
+    """
     inputs: dict[str, Any] = {**DEFAULT_INPUTS, "destination": destination, **overrides}
     logger.info("crew.run.start", extra={"destination": destination})
 
     # 1. Main 3-agent crew produces a TripPlan.
-    crew_result = _build_crew().kickoff(inputs=inputs)
+    crew_result = _build_crew(step_callback=step_callback).kickoff(inputs=inputs)
     plan = _extract_trip_plan(crew_result)
 
     # 2. Audit loop owns retry policy.
@@ -106,7 +122,7 @@ def run(destination: str, **overrides: Any) -> dict[str, Any]:
         "max_walking_km": inputs.get("max_walking_km"),
     }
     currency = str(inputs.get("currency", "USD"))
-    audited = run_audit(plan, constraints, currency=currency)
+    audited = run_audit(plan, constraints, currency=currency, step_callback=step_callback)
 
     output: dict[str, Any] = audited.model_dump()
 
@@ -134,6 +150,7 @@ def run_audit(
     plan: TripPlan,
     constraints: dict[str, Any],
     currency: str = "USD",
+    step_callback: Callable[[Any], None] | None = None,
 ) -> AuditedPlan:
     """Run up to MAX_AUDIT_PASSES of the Budget Auditor over `plan`.
 
@@ -146,7 +163,9 @@ def run_audit(
     last_result: AuditedPlan | None = None
 
     for pass_num in range(1, MAX_AUDIT_PASSES + 1):
-        last_result = _run_audit_pass(current_plan, constraints, currency, pass_num)
+        last_result = _run_audit_pass(
+            current_plan, constraints, currency, pass_num, step_callback=step_callback
+        )
         cumulative_log.extend(f"Pass {pass_num}: {entry}" for entry in last_result.revision_log)
         if last_result.approved:
             break
@@ -171,6 +190,7 @@ def _run_audit_pass(
     constraints: dict[str, Any],
     currency: str,
     pass_num: int,
+    step_callback: Callable[[Any], None] | None = None,
 ) -> AuditedPlan:
     """Single Auditor LLM call. Returns the AuditedPlan for THIS pass."""
     # Local import to avoid a researcher → tasks → budget_auditor → researcher
@@ -178,12 +198,15 @@ def _run_audit_pass(
     from trip_agents.budget_auditor import budget_auditor
 
     task = make_audit_task()
-    crew = Crew(
-        agents=[budget_auditor],
-        tasks=[task],
-        process=Process.sequential,
-        verbose=False,
-    )
+    crew_kwargs: dict[str, Any] = {
+        "agents": [budget_auditor],
+        "tasks": [task],
+        "process": Process.sequential,
+        "verbose": False,
+    }
+    if step_callback is not None:
+        crew_kwargs["step_callback"] = step_callback
+    crew = Crew(**crew_kwargs)
     pass_inputs: dict[str, Any] = {
         "current_plan_json": plan.model_dump_json(),
         "currency": currency,
