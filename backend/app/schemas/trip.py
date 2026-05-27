@@ -1,4 +1,11 @@
-"""Pydantic schemas for the trip resource — request bodies and responses."""
+"""Pydantic schemas for the trip resource — request bodies and responses.
+
+Slice 3.2 dropped user_id from TripCreate; it's derived server-side
+from the JWT subject. `extra="ignore"` makes the field disappear from
+the body silently if a client tries to send it — defence in depth.
+TripRead still surfaces user_id (it's set by the route handler from
+the auth dependency and persisted to the row).
+"""
 
 from __future__ import annotations
 
@@ -11,9 +18,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class TripCreate(BaseModel):
-    """POST /trips body. `status` and timestamps come from the DB defaults."""
+    """POST /trips body. `user_id` is derived from the JWT subject by
+    the route handler — it is NOT accepted in the body.
+    """
 
-    user_id: uuid.UUID
+    model_config = ConfigDict(extra="ignore")
+
     destination: str = Field(min_length=1, max_length=200)
     start_date: date | None = None
     end_date: date | None = None
