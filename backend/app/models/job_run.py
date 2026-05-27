@@ -22,7 +22,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,6 +52,11 @@ class JobRun(Base):
     # Worker writes this row on terminal events: succeeded | failed | cancelled.
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Auditor outcome — orthogonal to status. Null for non-succeeded jobs and
+    # for the brief pre-terminal window. The status endpoint surfaces this
+    # alongside state so the client can branch on "done + approved=false"
+    # (infeasible-plan path) without re-reading the days/blocks rows.
+    approved: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     # Per-agent event log captured by CrewAI's step_callback. Best-effort —
     # may be partial on failure. See worker._make_step_callback.

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -49,6 +50,7 @@ from trip_agents.errors import FatalJobError, RetryableJobError
 from app.config import settings
 from app.db.session import get_session
 from app.models.job_run import JobRun
+from app.schemas.plan import ProgressUpdate
 from app.services.trip_service import persist_audited_plan
 
 logger = logging.getLogger(__name__)
@@ -94,14 +96,27 @@ def _is_retryable(exc: BaseException) -> bool:
     return isinstance(exc, _ALWAYS_RETRYABLE)
 
 
-def _make_step_callback() -> tuple[list[dict[str, Any]], Any]:
+def _make_step_callback(
+    redis: Any | None = None,
+    trip_id: str | None = None,
+    loop: asyncio.AbstractEventLoop | None = None,
+) -> tuple[list[dict[str, Any]], Any]:
     """Return (event_list, callback). The callback appends step events to
     the list as CrewAI fires them. We dump the list to JobRun.agent_summary
     when the job ends. Tolerant of unknown step shapes since CrewAI's
     callback contract has shifted across releases.
+
+    If `redis`, `trip_id`, and `loop` are all provided, the callback also
+    writes a ProgressUpdate JSON to `trip:{trip_id}:progress` — the status
+    endpoint reads this. Best-effort: a Redis failure must not fail the job.
+
+    `loop` must be the running asyncio loop captured before entering
+    `asyncio.to_thread`. The callback runs on a worker thread (no loop of
+    its own), so we bridge via `run_coroutine_threadsafe`.
     """
     events: list[dict[str, Any]] = []
     started = time.monotonic()
+    progress_key = f"trip:{trip_id}:progress" if (redis is not None and trip_id and loop) else None
 
     def cb(step: Any) -> None:
         entry: dict[str, Any] = {
@@ -109,18 +124,48 @@ def _make_step_callback() -> tuple[list[dict[str, Any]], Any]:
             "elapsed_ms": int((time.monotonic() - started) * 1000),
             "timestamp": datetime.now(UTC).isoformat(),
         }
-        # CrewAI step objects usually have `.agent` (with `.role`) and
-        # `.output`. Be defensive — different CrewAI versions vary.
         agent = getattr(step, "agent", None)
+        agent_role = None
         if agent is not None and hasattr(agent, "role"):
-            entry["agent_role"] = agent.role
+            agent_role = agent.role
+            entry["agent_role"] = agent_role
         output = getattr(step, "output", None)
         if output is not None:
             text = str(output)
             entry["output_excerpt"] = text[:200]
         events.append(entry)
 
+        if progress_key and agent_role:
+            pass_num = getattr(step, "pass_num", None) or 1
+            try:
+                # Build via dict + model_validate so the field alias `pass`
+                # (a Python keyword) is the wire form. populate_by_name=True
+                # also accepts pass_ as the kwarg, but mypy doesn't track
+                # pydantic aliases — the dict path is unambiguous.
+                payload = ProgressUpdate.model_validate(
+                    {
+                        "agent": agent_role[:50],
+                        "pass": int(pass_num),
+                        "message": (
+                            str(output)[:200] if output is not None else f"{agent_role} step"
+                        ),
+                    }
+                ).model_dump(by_alias=True)
+                assert loop is not None and redis is not None
+                asyncio.run_coroutine_threadsafe(
+                    redis.setex(progress_key, _PROGRESS_TTL_SECONDS, json.dumps(payload)),
+                    loop,
+                )
+            except Exception:
+                # Progress is observability, not correctness. Never kill the job.
+                logger.debug("plan.progress_write.skipped", exc_info=True)
+
     return events, cb
+
+
+# Progress key TTL — short. The status endpoint reads it best-effort; a
+# worker crash should not leave stale progress visible for long.
+_PROGRESS_TTL_SECONDS = 120
 
 
 async def plan_trip(
@@ -142,7 +187,12 @@ async def plan_trip(
     started_at = datetime.now(UTC)
     monotonic_start = time.monotonic()
 
-    events, cb = _make_step_callback()
+    # arq passes the ArqRedis pool to tasks via ctx["redis"]. Capture the
+    # running loop here (the only thread that owns it) so the step_callback
+    # can schedule writes from inside asyncio.to_thread.
+    redis = ctx.get("redis")
+    loop = asyncio.get_running_loop()
+    events, cb = _make_step_callback(redis=redis, trip_id=trip_id, loop=loop)
 
     try:
         # The crew call dominates wall time. Run in the thread pool so the
@@ -154,11 +204,13 @@ async def plan_trip(
             **{k: v for k, v in request.items() if k != "destination"},
         )
     except asyncio.CancelledError:
-        # User cancelled — write JobRun and re-raise so arq marks the job done.
+        # User cancelled — write JobRun, clean up DELETE's tombstone and
+        # active_job key, re-raise so arq marks the job done.
         _write_job_run_session(
             job_id=str(job_id),
             trip_id=UUID(trip_id),
             status="cancelled",
+            approved=None,
             error="cancelled by user",
             agent_summary=events,
             started_at=started_at,
@@ -166,6 +218,7 @@ async def plan_trip(
             total_cost=Decimal("0"),
             total_tokens=0,
         )
+        await _cleanup_redis_keys(redis, trip_id, include_cancelling=True)
         raise
     except BaseException as exc:  # noqa: BLE001 — classify before re-raising
         if _is_retryable(exc):
@@ -182,6 +235,7 @@ async def plan_trip(
             job_id=str(job_id),
             trip_id=UUID(trip_id),
             status="failed",
+            approved=None,
             error=f"{type(exc).__name__}: {exc}",
             agent_summary=events,
             started_at=started_at,
@@ -189,6 +243,7 @@ async def plan_trip(
             total_cost=Decimal("0"),
             total_tokens=0,
         )
+        await _cleanup_redis_keys(redis, trip_id, include_cancelling=False)
         raise FatalJobError(str(exc)) from exc
 
     # Success path. Persist Days/Blocks/Sources to Postgres.
@@ -201,10 +256,12 @@ async def plan_trip(
         with contextlib.suppress(StopIteration):
             next(db_iter)
 
+    approved = bool(output.get("approved")) if "approved" in output else None
     job_run = _write_job_run_session(
         job_id=str(job_id),
         trip_id=UUID(trip_id),
         status="succeeded",
+        approved=approved,
         error=None,
         agent_summary=events,
         started_at=started_at,
@@ -215,11 +272,12 @@ async def plan_trip(
         total_cost=Decimal("0"),
         total_tokens=0,
     )
+    await _cleanup_redis_keys(redis, trip_id, include_cancelling=False)
     return {
         "job_id": job_run.job_id,
         "trip_id": str(trip_id),
         "status": job_run.status,
-        "approved": output.get("approved"),
+        "approved": approved,
     }
 
 
@@ -228,6 +286,7 @@ def _write_job_run_session(
     job_id: str,
     trip_id: UUID,
     status: str,
+    approved: bool | None,
     error: str | None,
     agent_summary: list[dict[str, Any]],
     started_at: datetime,
@@ -249,6 +308,7 @@ def _write_job_run_session(
             job_id=job_id,
             trip_id=trip_id,
             status=status,
+            approved=approved,
             error=error,
             agent_summary=agent_summary,
             total_tokens=total_tokens,
@@ -264,6 +324,25 @@ def _write_job_run_session(
     finally:
         with contextlib.suppress(StopIteration):
             next(db_iter)
+
+
+async def _cleanup_redis_keys(redis: Any | None, trip_id: str, *, include_cancelling: bool) -> None:
+    """Best-effort cleanup of slice-2.5c Redis keys on terminal events.
+
+    The status endpoint resolves terminal state from JobRun, so leaving
+    keys with TTL would also work — but explicit cleanup keeps the
+    invariant simple: post-terminal, there are no `trip:{id}:*` keys.
+
+    `include_cancelling=True` on the cancellation path so the GET handler
+    stops returning state="cancelling" the moment the JobRun row exists.
+    """
+    if redis is None:
+        return
+    keys = [f"trip:{trip_id}:active_job", f"trip:{trip_id}:progress"]
+    if include_cancelling:
+        keys.append(f"trip:{trip_id}:cancelling")
+    with contextlib.suppress(Exception):
+        await redis.delete(*keys)
 
 
 class WorkerSettings:
