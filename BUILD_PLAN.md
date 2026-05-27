@@ -126,12 +126,12 @@ The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic —
 
 #### Slice 2.5a: agents as standalone FastAPI service + uv workspace
 
-- [ ] **Done when:**
+- [x] **Done when:** *(Landed as PR #15 squashed to ffb0a3f, across two commits — d78a24e refactor-only move to `src/trip_agents`, then 0a8ffb3 new wiring. Beads `trip-concierge-q9o` closed. Workspace conversion surfaced a real crewai transitive pin conflict; observation recorded in `experiments/01-langfuse.md`.)*
   - Root `pyproject.toml` declares `[tool.uv.workspace] members = ["backend", "agents"]`. **mcp_server joins in slice 3.1** when it gains a proper installable package layout — today it has only one source file with no internal imports, so deferring is cheaper than restructuring speculatively.
   - `uv sync` from repo root provisions all three projects (per-project sync still works).
-  - `agents/` has a FastAPI service exposing `POST /run` that accepts the same kwargs as `agents.crew.run()` and returns the `AuditedPlan` JSON.
-  - A backend integration test calls the agents service via `httpx` (TestClient against the agents FastAPI app, mocked `crew.run`) and verifies the response validates as `agents.schemas.AuditedPlan`.
-  - Backend can `from agents.schemas import AuditedPlan` via the workspace path (no installed package).
+  - `agents/` has a FastAPI service exposing `POST /run` that accepts a `TripRunRequest` and returns the `AuditedPlan` JSON.
+  - A backend integration test calls the agents service via `httpx` (TestClient against the agents FastAPI app, mocked `crew.run`) and verifies the response validates as `trip_agents.schemas.AuditedPlan`.
+  - Backend can `from trip_agents.schemas import …` via the workspace path.
   - `make dev`, `make test`, `make check` all work across the workspace.
 - **Not in scope:** Redis, arq, job queue, status polling, AgentRun writes, backend's HTTP route to `/trips/{id}/plan`. Those are 2.5b/c.
 - **Beads:** `trip-concierge-q9o`.
