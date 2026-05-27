@@ -1,4 +1,14 @@
-"""HTTP handlers for the trip resource."""
+"""HTTP handlers for the trip resource.
+
+Slice 3.2: POST /trips requires `x-tc-token`; user_id is derived from
+the JWT subject, never from the request body. The TripCreate schema
+no longer carries user_id; defence-in-depth — even if a caller pastes
+user_id into the body, Pydantic ignores unknown keys (model_config
+extra='ignore' on the schema).
+
+GET /trips/{id} stays open in this slice — locked down by ownership
+in a later phase-4 slice when the PWA needs it.
+"""
 
 from __future__ import annotations
 
@@ -8,18 +18,21 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_mcp_token
 from app.db.session import get_session
+from app.models.user import User
 from app.schemas.trip import TripCreate, TripRead
 from app.services import trip_service
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
+AuthedUser = Annotated[User, Depends(require_mcp_token)]
 
 
 @router.post("", response_model=TripRead, status_code=status.HTTP_201_CREATED)
-def create_trip(payload: TripCreate, db: SessionDep) -> TripRead:
-    trip = trip_service.create_trip(db, payload)
+def create_trip(payload: TripCreate, user: AuthedUser, db: SessionDep) -> TripRead:
+    trip = trip_service.create_trip(db, payload, user_id=user.id)
     return TripRead.model_validate(trip)
 
 

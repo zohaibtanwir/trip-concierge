@@ -17,8 +17,14 @@ from app.models.trip import Trip
 from app.schemas.trip import TripCreate
 
 
-def create_trip(db: Session, payload: TripCreate) -> Trip:
-    trip = Trip(**payload.model_dump())
+def create_trip(db: Session, payload: TripCreate, *, user_id: uuid.UUID) -> Trip:
+    """Create a Trip row owned by the given user_id.
+
+    Slice 3.2 separated user_id from the request body — it now comes
+    from the JWT subject via the route's auth dependency, not from
+    untrusted input.
+    """
+    trip = Trip(user_id=user_id, **payload.model_dump())
     db.add(trip)
     db.commit()
     db.refresh(trip)
