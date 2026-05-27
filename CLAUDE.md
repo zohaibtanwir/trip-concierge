@@ -68,6 +68,7 @@ These exist because of the supply chain attack landscape in 2026 (Axios, TanStac
 ## Always do
 
 - **Test first.** For every new feature or bug fix, write a failing test before the implementation. The test goes in `tests/` mirroring the source path.
+- **`pytest-asyncio` runs in auto mode** (set in each Python project's pytest config). Async tests don't need `@pytest.mark.asyncio`. Trade-off accepted in Slice 2.5b — beware naming fixtures with the `test_` prefix; pytest-asyncio's auto-collection treats anything matching `test_*` as a test.
 - **Run the test suite before declaring a slice done.** `make test` runs both Python and Node tests.
 - **Run linters and type checkers before committing.** `make check` runs `ruff`, `mypy`, `biome`, `tsc`.
 - **Update `BUILD_PLAN.md`** when a slice is completed. Mark it `[x]` and link to the merge commit.
