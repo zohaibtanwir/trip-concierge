@@ -98,38 +98,41 @@ trip-concierge/
 ├── CLAUDE.md                  # this file
 ├── BUILD_PLAN.md              # vertical slices, in order
 ├── Makefile                   # entry-point commands
+├── pyproject.toml             # uv workspace root (members: backend, agents, mcp_server)
+├── docker-compose.yml         # postgres (pgvector), redis
 ├── docs/
 │   └── prd.md                 # full product spec
-├── agents/
+├── agents/                    # workspace member — Agents Service (FastAPI + arq worker)
+│   ├── pyproject.toml
 │   ├── prompts.md             # CrewAI agent definitions + MCP tool descriptions
 │   ├── researcher.py
 │   ├── local_expert.py
 │   ├── logistics.py
 │   ├── budget_auditor.py
-│   └── crew.py                # crew composition + process selection
-├── backend/
+│   ├── crew.py                # crew composition + Python-orchestrated audit loop
+│   ├── service.py             # FastAPI app: POST /run (used by backend via HTTP)
+│   ├── schemas.py             # AuditedPlan / TripPlan / Day / Block — shared via workspace
+│   └── tools/
+├── backend/                   # workspace member — Backend API (FastAPI)
 │   ├── pyproject.toml
 │   ├── app/
 │   │   ├── main.py            # FastAPI entry
 │   │   ├── config.py
 │   │   ├── routes/
-│   │   ├── models/            # SQLAlchemy models
-│   │   ├── schemas/           # Pydantic schemas
+│   │   ├── models/            # SQLAlchemy models (Trip, Day, Block, Source, AgentRun, User)
+│   │   ├── schemas/           # Pydantic schemas (HTTP layer)
 │   │   ├── services/
 │   │   └── db/
 │   │       └── migrations/    # Alembic
 │   └── tests/
-├── mcp_server/
-│   ├── server.py              # stdio + HTTP MCP server
+├── mcp_server/                # workspace member — MCP stdio + HTTP server
+│   ├── pyproject.toml
+│   ├── server.py
 │   ├── tools/                 # one module per MCP tool
 │   └── tests/
-├── web/
+├── web/                       # NOT a uv workspace member (Node/pnpm project)
 │   ├── package.json
-│   ├── app/                   # Next.js App Router
-│   ├── components/
-│   ├── lib/
-│   ├── public/
-│   └── tests/
+│   └── ...
 ├── .claude/
 │   └── rules/                 # one file per recurring rule
 ├── .beads/                    # Beads (Dolt embedded) — local-only via stealth mode
@@ -137,6 +140,8 @@ trip-concierge/
 └── .github/
     └── workflows/             # CI — pinned to SHA, no pull_request_target
 ```
+
+**Why `agents` is both a workspace member AND a separate service:** the workspace is a dev-time convenience (shared Pydantic types, single `uv sync`, type-checking sees across projects). The service split is a runtime requirement — the 4-agent crew takes ~9 minutes per kickoff and would time out any HTTP gateway if it ran in the backend's request thread. The two layers solve different problems; see PRD §2.1 and the Slice 2.5a / 2.5b / 2.5c spec in BUILD_PLAN.md.
 
 ---
 

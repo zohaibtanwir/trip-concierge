@@ -120,10 +120,47 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
   - migration `0002_days_blocks_sources.py`
 - **Tests:** crew run for a synthetic trip creates the expected row counts.
 
-### Slice 2.5: `/trips/{id}/plan` endpoint (full sequential generation)
+### Slice 2.5: `/trips/{id}/plan` endpoint — decomposed into 2.5a / 2.5b / 2.5c
 
-- [ ] **Done when:** `POST /trips/{id}/plan` runs the full 4-agent sequential crew, persists output, returns the trip with days/blocks/sources. p95 ≤ 30s for a small trip.
-- **Tests:** integration test with mocked LLM calls; timing assertion is informational not blocking.
+The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic — slice 2.3 live runs measured a 9-minute crew runtime, and gateway proxies (Fly.io, Hetzner Nginx defaults) time out at 60s. Decomposed after the architecture review into three slices that build up the production-correct shape: HTTP boundary between backend and agents (Option B done-right), with a Redis-backed arq job queue so the user-facing HTTP request returns in <1s. Layered on top is a uv workspace, purely for dev ergonomics + shared Pydantic types across backend/agents/mcp_server.
+
+#### Slice 2.5a: agents as standalone FastAPI service + uv workspace
+
+- [ ] **Done when:**
+  - Root `pyproject.toml` declares `[tool.uv.workspace] members = ["backend", "agents", "mcp_server"]`.
+  - `uv sync` from repo root provisions all three projects (per-project sync still works).
+  - `agents/` has a FastAPI service exposing `POST /run` that accepts the same kwargs as `agents.crew.run()` and returns the `AuditedPlan` JSON.
+  - A backend integration test calls the agents service via `httpx` (TestClient against the agents FastAPI app, mocked `crew.run`) and verifies the response validates as `agents.schemas.AuditedPlan`.
+  - Backend can `from agents.schemas import AuditedPlan` via the workspace path (no installed package).
+  - `make dev`, `make test`, `make check` all work across the workspace.
+- **Not in scope:** Redis, arq, job queue, status polling, AgentRun writes, backend's HTTP route to `/trips/{id}/plan`. Those are 2.5b/c.
+- **Beads:** `trip-concierge-q9o`.
+
+#### Slice 2.5b: Redis + arq job queue for crew runs
+
+- [ ] **Done when:**
+  - `redis` service added to `docker-compose.yml`.
+  - `arq` pinned exact in both `backend/` and `agents/`.
+  - `POST /trips/{id}/plan` on backend enqueues an arq job, returns **202 Accepted** with `{job_id, status_url}` in **< 1 second** (the user-facing latency target).
+  - An arq worker (process launched alongside the agents service) consumes jobs, runs the 4-agent crew, calls `persist_audited_plan()`, and writes `AgentRun` rows with token counts, costs, and durations.
+  - `make dev` (or new `make worker`) launches the worker.
+  - Integration test (offline, mocked `crew.run`): enqueue → in-process worker drains queue → fetch trip and assert days/blocks persisted + AgentRun rows present.
+  - CI: redis service container alongside postgres in `ci.yml`.
+  - Langfuse traces include queue wait time as a distinct span.
+- **Not in scope:** status polling endpoint (2.5c), cancellation, per-agent progress messages.
+- **Beads:** `trip-concierge-odc` (blocked by 2.5a).
+
+#### Slice 2.5c: Status endpoint + polling protocol
+
+- [ ] **Done when:**
+  - `GET /trips/{trip_id}/plan/status` returns `{state, progress_message, started_at, finished_at, error, trip_url}` where state ∈ {queued, running, done, failed}.
+  - The arq worker updates `progress_message` before each agent kickoff: `"researching candidates"`, `"narrowing to best fits"`, `"building day-by-day plan"`, `"audit pass 1"`, `"audit pass 2"` (if reached).
+  - `DELETE /trips/{trip_id}/plan` cancels an in-flight job: 204 on cancel, 404 if no job, 409 if already done. Cancelled jobs don't write AgentRun rows for incomplete passes.
+  - Integration test: enqueue → poll three times → observe queued → running → done; last poll has `trip_url`.
+  - Integration test: enqueue → cancel mid-flight → status reports `failed` with `error="cancelled by user"`.
+  - OpenAPI docs at `/docs` show the status schema.
+- **Not in scope:** SSE / websocket streaming (v2.0), email-on-complete, retry-on-failure.
+- **Beads:** `trip-concierge-zyy` (blocked by 2.5b).
 
 ---
 

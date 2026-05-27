@@ -45,12 +45,15 @@ The 2026 AI travel planner market is saturated with itinerary generators that al
 
 | Metric | Target |
 |---|---|
-| Time from intake to first itinerary | < 30 seconds |
+| Time from intake to **202 Accepted** | < 1 second (p95) |
+| Crew completion time (queued → done) | < 12 minutes (p95, v1.0 target) |
 | Source-cited recommendations | 100% of venues |
 | User-visible agent reasoning steps | ≥ 4 per trip |
 | MCP tool reliability (success rate) | ≥ 95% |
 | PWA Lighthouse performance score (mobile) | ≥ 85 |
 | MCP server cold-start to first token | < 2 seconds |
+
+> **Note on the timing metrics:** the original spec was "< 30 seconds intake → first itinerary". Slice 2.3 live runs measured ~9 minutes for a 3-day Goa plan with the 4-agent sequential crew (Researcher → Local Expert → Logistics → Budget Auditor). Rather than relax the spec as a fudge, we restructured around an async/queued architecture: the user-facing HTTP request returns < 1s with a `job_id`, the actual crew runs in the background, and the PWA/MCP poll for status. This is the right architecture for a multi-agent planner regardless — the original 30s target was a planning artifact from when the spec assumed a single-LLM completion. Reducing the 12-minute crew time is a real optimization target (parallelize agent calls, smaller models for narrowing steps, caching) — captured as a separate workstream after v1.0 ships.
 
 ---
 
@@ -59,40 +62,62 @@ The 2026 AI travel planner market is saturated with itinerary generators that al
 ### 2.1 System diagram
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                                                            │
-│              ┌──────────────────────────────┐              │
-│              │     CrewAI Agent Backend     │              │
-│              │  ┌────────────────────────┐  │              │
-│              │  │  Researcher Agent      │  │              │
-│              │  │  Local Expert Agent    │  │              │
-│              │  │  Logistics Planner     │  │              │
-│              │  │  Budget Auditor        │  │              │
-│              │  └────────────────────────┘  │              │
-│              │                              │              │
-│              │   CrewAI memory (SQLite)     │              │
-│              │   PostgreSQL (trip state)    │              │
-│              │   Redis (job queue, cache)   │              │
-│              └──────────────┬───────────────┘              │
-│                             │                              │
-│                ┌────────────▼────────────┐                 │
-│                │     FastAPI Service     │                 │
-│                │  /trips, /agents, /auth │                 │
-│                └────────────┬────────────┘                 │
-│                             │                              │
-│            ┌────────────────┴────────────────┐             │
-│            │                                 │             │
-│      ┌─────▼─────┐                    ┌──────▼──────┐      │
-│      │ MCP       │                    │  PWA        │      │
-│      │ Server    │                    │ (Next.js)   │      │
-│      │ (Python)  │                    │             │      │
-│      └─────┬─────┘                    └──────┬──────┘      │
-│            │                                 │             │
-└────────────┼─────────────────────────────────┼─────────────┘
-             │                                 │
-        Claude / ChatGPT                  Browser / Mobile
-        (user's AI chat)                  (tripconcierge.app)
+                Claude / ChatGPT          Browser / Mobile
+                (user's AI chat)         (tripconcierge.app)
+                       │                          │
+              ┌────────▼─────────┐      ┌─────────▼─────────┐
+              │   MCP Server     │      │   PWA (Next.js)   │
+              │  (Python, stdio) │      │                   │
+              └────────┬─────────┘      └─────────┬─────────┘
+                       │                          │
+                       └──────────────┬───────────┘
+                                      │
+                              ┌───────▼──────────┐
+                              │ Backend API      │
+                              │ (FastAPI)        │
+                              │ /trips, /auth,   │
+                              │ /trips/{id}/plan │
+                              │ /plan/status     │
+                              └───┬───────────┬──┘
+                                  │           │
+                       enqueue ───┘           └─── reads/writes
+                                  │           │
+                              ┌───▼───────────▼──┐
+                              │ Postgres + pgvec │
+                              │ (trips, days,    │
+                              │  blocks, sources,│
+                              │  agent_runs)     │
+                              └──────────────────┘
+                                  ▲
+                                  │ persists results
+                                  │
+                              ┌───┴──────────────────────────┐
+                              │ Agents Service               │
+                              │ (FastAPI + arq worker)       │
+                              │ ┌──────────────────────────┐ │
+                              │ │ CrewAI 4-agent crew      │ │
+                              │ │  Researcher              │ │
+                              │ │  Local Expert            │ │
+                              │ │  Logistics               │ │
+                              │ │  Budget Auditor          │ │
+                              │ │  (Python audit loop)     │ │
+                              │ └──────────────────────────┘ │
+                              └──────────┬───────────────────┘
+                                         │ jobs in/out
+                                  ┌──────▼──────┐
+                                  │    Redis    │
+                                  │ (arq queue, │
+                                  │   cache)    │
+                                  └─────────────┘
+
+External calls (from Agents Service):
+  Anthropic Sonnet 4 (LLM)
+  Tavily / Serper (web search)
+  Langfuse (tracing — every audit.pass + agent kickoff is a span)
 ```
+
+**Why the split (decided in Slice 2.5 architecture review, 2026-05-27):**
+The 4-agent crew takes ~9 minutes per kickoff. Production HTTP proxies (Fly.io default gateway, Hetzner Nginx) cap requests at 60s. Putting the crew in the Backend API process would make `POST /trips/{id}/plan` time out before completing. The async/queued pattern lets the user-facing API return `202 Accepted` in < 1s; the actual work happens in the Agents Service worker pool, gated by Redis.
 
 ### 2.2 Tech stack
 
