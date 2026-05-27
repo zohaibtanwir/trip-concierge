@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 BlockType = Literal["venue", "transit", "meal", "rest"]
 
@@ -96,3 +96,99 @@ class TripRunRequest(BaseModel):
     mobility: str = ""
     no_go_list: str = ""
     max_walking_km: float | None = Field(default=None, ge=0)
+
+
+class CreateTripInput(BaseModel):
+    """Input shape for the create_trip MCP tool. Source of truth for both
+    Pydantic runtime validation AND the JSON Schema emitted to Claude
+    Desktop via model_json_schema().
+
+    `destination` and `vibe` are individually Optional at the field level,
+    but the model_validator below enforces "at least one of the two." The
+    JSON Schema cannot express that cross-field rule natively — the LLM
+    learns it from the per-field descriptions plus this docstring (which
+    surfaces as the schema's top-level `description`).
+
+    Distinct from TripRunRequest: this is what the LLM extracts from user
+    speech (MCP boundary). TripRunRequest is what the agents worker
+    consumes (queue boundary), with structured constraint fields the chat
+    user wouldn't naturally mention. The MCP tool translates the former
+    into the latter when issuing POST /trips and POST /trips/{id}/plan.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    destination: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "Where the user wants to go. Required if no vibe is provided. "
+            "Extract the named place from the user's request — city, region, "
+            "country, neighborhood, all fine."
+        ),
+    )
+    start_date: str | None = Field(
+        default=None,
+        description=(
+            "Trip start date in YYYY-MM-DD format. Leave unset if the user "
+            "didn't give specific dates; do not invent or assume."
+        ),
+    )
+    end_date: str | None = Field(
+        default=None,
+        description=(
+            "Trip end date in YYYY-MM-DD format. Leave unset if the user "
+            "didn't give specific dates; do not invent or assume."
+        ),
+    )
+    group_size: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of travelers. Extract from phrases like 'me and my partner' "
+            "(2), 'group of 5', 'solo trip' (1). Defaults to 1."
+        ),
+    )
+    budget_total: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Total trip budget as a number (e.g., 40000 for ₹40k, 2500 for "
+            "$2500). Leave unset if the user didn't mention a budget — do not "
+            "invent one."
+        ),
+    )
+    currency: str = Field(
+        default="USD",
+        min_length=3,
+        max_length=3,
+        description=(
+            "ISO-4217 currency code: USD, INR, EUR, GBP, JPY, etc. Extract "
+            "from the budget's symbol or context. Defaults to USD."
+        ),
+    )
+    pace: Literal["packed", "balanced", "lazy"] = Field(
+        default="balanced",
+        description=(
+            "How packed the days are: 'packed' = max sights and activities, "
+            "'balanced' = mix of activity and rest (default), 'lazy' = low-key, "
+            "lots of downtime. Extract from words like 'relaxed' (lazy), "
+            "'easy' (lazy), 'busy' (packed), 'pack it in' (packed)."
+        ),
+    )
+    vibe: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "Short phrase describing the trip's feel — extract user words like "
+            "'chill', 'adventure', 'foodie', 'romantic', 'family-friendly'. "
+            "Leave unset if no vibe was mentioned. Required if destination is "
+            "not provided."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _at_least_destination_or_vibe(self) -> CreateTripInput:
+        if not self.destination and not self.vibe:
+            raise ValueError("at least one of `destination` or `vibe` must be provided")
+        return self

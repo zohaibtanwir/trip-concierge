@@ -73,3 +73,21 @@ def format_create_failed(reason: str) -> str:
     fields based on the reason.
     """
     return f"I couldn't create the trip — {reason}.\n\nWant to try again with different details?"
+
+
+def format_clarification_needed(missing: list[str]) -> str:
+    """Tool-response string when the LLM called create_trip without enough
+    information to plan a trip.
+
+    First-person tone is deliberate — Claude Desktop's LLM reads this
+    response and echoes it conversationally to the user. The pattern
+    (soft-validation responses in _responses.py) carries through 3.3-3.5.
+    """
+    if missing == ["destination_or_vibe"]:
+        return (
+            "I need a bit more to plan this — either a destination "
+            "(like 'Goa' or 'somewhere in Europe') or a vibe "
+            "(like 'chill beach trip' or 'foodie adventure'). "
+            "What did you have in mind?"
+        )
+    return f"I need more information to plan this trip: {', '.join(missing)}."

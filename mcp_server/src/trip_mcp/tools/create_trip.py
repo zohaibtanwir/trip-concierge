@@ -5,6 +5,11 @@ POST /trips/{id}/plan (enqueues the crew job, returns 202). On the
 happy path returns a conversational message naming the trip_id, the
 share URL, and the ~10-minute expectation.
 
+Input validation goes through trip_agents.schemas.CreateTripInput so
+the Pydantic model is the single source of truth for both runtime
+validation and the JSON Schema emitted to Claude Desktop (see
+server.py).
+
 Description sync: the tool description is sourced from
 agents/prompts.md §4.1. Keep both in sync — see
 .claude/rules/mcp-tool-description-style.md.
@@ -21,10 +26,13 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
+from trip_agents.schemas import CreateTripInput
 
 from trip_mcp.auth import NoTokenError, load_token
 from trip_mcp.config import backend_url, default_token_file
 from trip_mcp.tools._responses import (
+    format_clarification_needed,
     format_create_failed,
     format_created_trip,
     format_partial_failure,
@@ -34,9 +42,12 @@ from trip_mcp.tools._responses import (
 # .claude/rules/mcp-tool-description-style.md, prompts.md is canonical;
 # edits to this string must update prompts.md in the same commit.
 DESCRIPTION = """
-Use this tool when the user expresses intent to plan a new trip and provides at
-least a destination or a vibe/style description. The tool creates a fresh trip
-record and starts a multi-agent planning job in the background.
+**This is the trip planning tool. When a user asks to plan, build, design, or
+create a trip — use this tool.** Do not use places_search, web_search, or
+your general travel knowledge to construct a trip yourself. This tool
+produces a real, persistent, multi-agent itinerary the user can save, refine,
+and share. Built-in search returns ephemeral results that don't persist and
+can't be refined.
 
 Required: at least one of `destination` or `vibe`.
 Recommended: dates, group_size, budget_total.
@@ -47,6 +58,7 @@ this conversation, the user almost certainly wants to modify it, not start over.
 
 DO NOT call this tool for general travel questions ("what's the best time to
 visit Japan?") — answer those conversationally without invoking the planner.
+You may use web_search or your training knowledge for those.
 
 Timing and what to say to the user:
 - The tool call returns in under 1 second with a trip_id and a share URL.
@@ -78,17 +90,31 @@ def _share_url(trip_id: uuid.UUID) -> str:
     return f"https://tripconcierge.app/trips/{trip_id}"
 
 
+def _missing_fields_from_validation_error(exc: ValidationError) -> list[str]:
+    """Translate a Pydantic ValidationError into the user-facing missing-field
+    list that format_clarification_needed knows how to render.
+
+    Only one cross-field case today: "at least one of destination or vibe".
+    Per-field required-failures could land here in future tools.
+    """
+    for err in exc.errors():
+        msg = str(err.get("msg", ""))
+        if "destination" in msg and "vibe" in msg:
+            return ["destination_or_vibe"]
+    # Fallback — list the field names that failed.
+    return [str(err.get("loc", ["unknown"])[-1]) for err in exc.errors()]
+
+
 async def create_trip(
     *,
-    destination: str,
+    destination: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     group_size: int = 1,
     budget_total: float | None = None,
     currency: str = "USD",
     pace: str = "balanced",
-    vibe: str = "",
-    constraints: dict[str, Any] | None = None,
+    vibe: str | None = None,
 ) -> str:
     """Implementation. Returns a string for Claude Desktop to render.
 
@@ -96,35 +122,46 @@ async def create_trip(
     force the LLM to re-summarize. Pre-summarized text is better UX.
     """
     try:
+        validated = CreateTripInput(
+            destination=destination,
+            start_date=start_date,
+            end_date=end_date,
+            group_size=group_size,
+            budget_total=budget_total,
+            currency=currency,
+            pace=pace,  # type: ignore[arg-type]
+            vibe=vibe,
+        )
+    except ValidationError as exc:
+        return format_clarification_needed(_missing_fields_from_validation_error(exc))
+
+    try:
         token = load_token(token_file=_token_file())
     except NoTokenError:
         from trip_mcp.tools._base import _DEV_CLI_HINT  # noqa: PLC0415
 
         return _DEV_CLI_HINT
 
+    # Translate CreateTripInput (MCP-boundary shape) → POST /trips body
+    # (backend-boundary shape). Both projects own their own schemas; the
+    # mapping happens here, at the seam.
     body: dict[str, Any] = {
-        "destination": destination,
-        "group_size": group_size,
-        "currency": currency,
-        "pace": pace,
-        "constraints": constraints or {},
+        "destination": validated.destination or "",
+        "group_size": validated.group_size,
+        "currency": validated.currency,
+        "pace": validated.pace,
+        "constraints": {},
     }
-    if start_date is not None:
-        body["start_date"] = start_date
-    if end_date is not None:
-        body["end_date"] = end_date
-    if budget_total is not None:
-        body["budget_total"] = str(budget_total)
-    # `vibe` is documented as a tool input but doesn't have a column on the
-    # Trip row in v1.0 — it's a future PRD §F4 structured-constraint. Drop
-    # silently rather than 422 the user.
-    _ = vibe
+    if validated.start_date is not None:
+        body["start_date"] = validated.start_date
+    if validated.end_date is not None:
+        body["end_date"] = validated.end_date
+    if validated.budget_total is not None:
+        body["budget_total"] = str(validated.budget_total)
 
     with _http_client(token) as client:
         create_resp = client.post("/trips", json=body)
         if create_resp.status_code != 201:
-            # Never raise — every failure surfaces as a tool-level message
-            # the LLM can render to the user.
             return format_create_failed(_extract_reason(create_resp))
 
         created = create_resp.json()
@@ -137,9 +174,9 @@ async def create_trip(
 
     return format_created_trip(
         trip_id=trip_id,
-        destination=destination,
-        budget_total=budget_total,
-        currency=currency,
+        destination=validated.destination or validated.vibe or "your",
+        budget_total=validated.budget_total,
+        currency=validated.currency,
         share_url=share,
     )
 

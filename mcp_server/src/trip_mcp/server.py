@@ -6,6 +6,11 @@ Registers tools with the MCP Server and exposes a stdio main(). Slice
 Description strings live in agents/prompts.md (canonical) — see the
 per-tool module for the synced literal and a `# Source:` comment per
 .claude/rules/mcp-tool-description-style.md.
+
+Input schemas are emitted from Pydantic models in trip_agents.schemas
+via model_json_schema(). One model is the source of truth for both
+runtime validation (in tools/*.py) and the JSON Schema sent to Claude
+Desktop (here).
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from typing import Any
 
 import mcp.types as types
 from mcp.server import Server
+from trip_agents.schemas import CreateTripInput
 
 from trip_mcp.tools import create_trip as create_trip_tool
 
@@ -27,55 +33,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="create_trip",
             description=create_trip_tool.DESCRIPTION,
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "destination": {
-                        "type": "string",
-                        "description": (
-                            "Where the user wants to go — city, region, or country. Free-form."
-                        ),
-                    },
-                    "start_date": {
-                        "type": "string",
-                        "description": "ISO date (YYYY-MM-DD). Optional.",
-                    },
-                    "end_date": {
-                        "type": "string",
-                        "description": "ISO date (YYYY-MM-DD). Optional.",
-                    },
-                    "group_size": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": 1,
-                        "description": "Number of travelers. Defaults to 1.",
-                    },
-                    "budget_total": {
-                        "type": "number",
-                        "minimum": 0,
-                        "description": "Total trip budget (numeric). Optional.",
-                    },
-                    "currency": {
-                        "type": "string",
-                        "default": "USD",
-                        "description": "ISO-4217 currency code. Defaults to USD.",
-                    },
-                    "pace": {
-                        "type": "string",
-                        "enum": ["packed", "balanced", "lazy"],
-                        "default": "balanced",
-                        "description": "Itinerary pace.",
-                    },
-                    "vibe": {
-                        "type": "string",
-                        "description": (
-                            "Free-form vibe / style description (e.g., 'chill', "
-                            "'adventure', 'foodie'). Optional."
-                        ),
-                    },
-                },
-                "required": ["destination"],
-            },
+            inputSchema=CreateTripInput.model_json_schema(),
         ),
     ]
 
