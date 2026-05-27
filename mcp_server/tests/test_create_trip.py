@@ -105,15 +105,23 @@ async def test_happy_path_returns_conversational_message_with_share_url(
 
 @pytest.mark.asyncio
 async def test_create_trip_failure_surfaces_clear_error(tmp_path: Path) -> None:
-    """POST /trips fails (e.g. 422 validation). The tool must surface an
-    error string Claude Desktop renders directly — not a raw exception.
+    """POST /trips fails server-side (e.g. backend rule we don't enforce
+    client-side). The tool must surface an error string Claude Desktop
+    renders directly — not a raw exception.
+
+    Input must pass the client-side CreateTripInput validator first so
+    we actually reach the HTTP layer; the model's cross-field rule
+    catches the empty-destination case before any POST happens (see
+    the clarification-path test above).
     """
     token_file = _seed_token(tmp_path)
 
     def _post(url: str, json: dict | None = None) -> MagicMock:
         return _fake_response(
             status_code=422,
-            json_payload={"detail": [{"loc": ["body", "destination"], "msg": "required"}]},
+            json_payload={
+                "detail": [{"loc": ["body", "start_date"], "msg": "invalid date format"}]
+            },
         )
 
     fake_client = MagicMock()
@@ -125,7 +133,7 @@ async def test_create_trip_failure_surfaces_clear_error(tmp_path: Path) -> None:
         patch("trip_mcp.tools.create_trip._token_file", return_value=token_file),
         patch("trip_mcp.tools.create_trip._http_client", return_value=fake_client),
     ):
-        text = await create_trip(destination="")
+        text = await create_trip(destination="Goa")
 
     # Don't leak the raw exception; do convey that the create failed.
     assert "trip" in text.lower()
@@ -185,6 +193,37 @@ async def test_plan_enqueue_failure_returns_partial_failure_message(
     assert "couldn't be started" in text or "could not be started" in text
     assert "start planning again" in text.lower() or "retry" in text.lower()
     assert "10 minutes" not in text  # the job did NOT start
+
+
+@pytest.mark.asyncio
+async def test_create_trip_with_neither_destination_nor_vibe_asks_for_clarification(
+    tmp_path: Path,
+) -> None:
+    """The "at least one of destination or vibe" rule fires before the
+    HTTP layer is touched. The tool returns the clarification message
+    instead of making any backend calls.
+    """
+    token_file = _seed_token(tmp_path)
+
+    fake_client = MagicMock()
+    fake_client.post = MagicMock(side_effect=AssertionError("must not POST"))
+    fake_client.__enter__ = lambda self: self  # type: ignore[method-assign]
+    fake_client.__exit__ = lambda self, *a: None  # type: ignore[method-assign]
+
+    with (
+        patch("trip_mcp.tools.create_trip._token_file", return_value=token_file),
+        patch("trip_mcp.tools.create_trip._http_client", return_value=fake_client),
+    ):
+        text = await create_trip(destination=None, vibe=None)
+
+    # No HTTP call happened — validation short-circuited.
+    assert not fake_client.post.called, (
+        "validation must short-circuit before any backend HTTP calls"
+    )
+    # Surfaces the canonical clarification message.
+    assert "destination" in text.lower()
+    assert "vibe" in text.lower()
+    assert "What did you have in mind?" in text
 
 
 @pytest.mark.asyncio

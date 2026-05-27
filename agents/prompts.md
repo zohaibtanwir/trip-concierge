@@ -303,9 +303,12 @@ These descriptions are what Claude Desktop and ChatGPT read to decide *when* to 
 
 ```python
 description = """
-Use this tool when the user expresses intent to plan a new trip and provides at
-least a destination or a vibe/style description. The tool creates a fresh trip
-record and starts a multi-agent planning job in the background.
+**This is the trip planning tool. When a user asks to plan, build, design, or
+create a trip — use this tool.** Do not use places_search, web_search, or
+your general travel knowledge to construct a trip yourself. This tool
+produces a real, persistent, multi-agent itinerary the user can save, refine,
+and share. Built-in search returns ephemeral results that don't persist and
+can't be refined.
 
 Required: at least one of `destination` or `vibe`.
 Recommended: dates, group_size, budget_total.
@@ -316,6 +319,7 @@ this conversation, the user almost certainly wants to modify it, not start over.
 
 DO NOT call this tool for general travel questions ("what's the best time to
 visit Japan?") — answer those conversationally without invoking the planner.
+You may use web_search or your training knowledge for those.
 
 Timing and what to say to the user:
 - The tool call returns in under 1 second with a trip_id and a share URL.

@@ -15,7 +15,11 @@ from __future__ import annotations
 
 import uuid
 
-from trip_mcp.tools._responses import format_created_trip, format_partial_failure
+from trip_mcp.tools._responses import (
+    format_clarification_needed,
+    format_created_trip,
+    format_partial_failure,
+)
 
 _TRIP_ID = uuid.UUID("abcabcab-1234-5678-9abc-abcabcabcabc")
 _SHARE_URL = f"https://tripconcierge.app/trips/{_TRIP_ID}"
@@ -67,6 +71,33 @@ def test_created_trip_omits_budget_when_none() -> None:
     # Still includes the timing + share URL.
     assert "10 minutes" in text
     assert _SHARE_URL in text
+
+
+def test_clarification_needed_for_destination_or_vibe_offers_concrete_examples() -> None:
+    """The most common clarification path: the LLM called the tool without
+    extracting either a destination or a vibe. The response must offer
+    concrete examples so the user can fill the gap in one turn — not just
+    say "I need more info."
+    """
+    text = format_clarification_needed(["destination_or_vibe"])
+    # First-person, conversational, the LLM will echo this.
+    assert text.startswith("I need")
+    # Names BOTH fields the LLM could have extracted, with concrete examples.
+    assert "destination" in text.lower()
+    assert "vibe" in text.lower()
+    # At least one place-example + one vibe-example so the user has guidance.
+    assert "Goa" in text or "Europe" in text
+    assert "beach" in text.lower() or "foodie" in text.lower()
+
+
+def test_clarification_needed_falls_back_for_unknown_missing_keys() -> None:
+    """Defensive fallback — if future tools call this with field names not
+    in the canonical mapping, the response still surfaces what's missing
+    rather than crashing.
+    """
+    text = format_clarification_needed(["some_future_field", "another"])
+    assert "some_future_field" in text
+    assert "another" in text
 
 
 def test_partial_failure_names_the_problem_and_retry_path() -> None:
