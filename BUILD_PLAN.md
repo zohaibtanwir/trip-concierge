@@ -127,7 +127,7 @@ The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic —
 #### Slice 2.5a: agents as standalone FastAPI service + uv workspace
 
 - [ ] **Done when:**
-  - Root `pyproject.toml` declares `[tool.uv.workspace] members = ["backend", "agents", "mcp_server"]`.
+  - Root `pyproject.toml` declares `[tool.uv.workspace] members = ["backend", "agents"]`. **mcp_server joins in slice 3.1** when it gains a proper installable package layout — today it has only one source file with no internal imports, so deferring is cheaper than restructuring speculatively.
   - `uv sync` from repo root provisions all three projects (per-project sync still works).
   - `agents/` has a FastAPI service exposing `POST /run` that accepts the same kwargs as `agents.crew.run()` and returns the `AuditedPlan` JSON.
   - A backend integration test calls the agents service via `httpx` (TestClient against the agents FastAPI app, mocked `crew.run`) and verifies the response validates as `agents.schemas.AuditedPlan`.
