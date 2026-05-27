@@ -303,22 +303,28 @@ These descriptions are what Claude Desktop and ChatGPT read to decide *when* to 
 
 ```python
 description = """
-Use this tool when the user expresses intent to plan a new trip and provides at least
-a destination or a vibe/style description. The tool starts a fresh trip and returns
-an initial day-by-day itinerary plus a share URL.
+Use this tool when the user expresses intent to plan a new trip and provides at
+least a destination or a vibe/style description. The tool creates a fresh trip
+record and starts a multi-agent planning job in the background.
 
 Required: at least one of `destination` or `vibe`.
 Recommended: dates, group_size, budget_total.
 
-DO NOT call this tool if the user is asking about an existing trip — use refine_trip
-or get_trip instead. If a trip_id has already been mentioned in this conversation,
-the user almost certainly wants to modify it, not start over.
+DO NOT call this tool if the user is asking about an existing trip — use
+refine_trip or get_trip instead. If a trip_id has already been mentioned in
+this conversation, the user almost certainly wants to modify it, not start over.
 
-DO NOT call this tool for general travel questions ("what's the best time to visit
-Japan?") — answer those conversationally without invoking the planner.
+DO NOT call this tool for general travel questions ("what's the best time to
+visit Japan?") — answer those conversationally without invoking the planner.
 
-Generation takes 20-30 seconds. You may show the user the share URL as soon as it
-is returned; the full plan is available immediately.
+Timing and what to say to the user:
+- The tool call returns in under 1 second with a trip_id and a share URL.
+- The full plan is NOT available immediately — the background job takes about
+  10 minutes to finish. The share URL works right away but shows a planning
+  state until the job completes.
+- Tell the user the trip was created and offer to check back via get_trip.
+- DO NOT promise the plan is "ready," "available now," or "done" — those are
+  false until get_trip confirms it.
 """
 ```
 
