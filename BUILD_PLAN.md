@@ -111,7 +111,7 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 2.4: Day + Block + Source models and migrations
 
-- [ ] **Done when:** Crew output is persisted to Postgres as Day, Block, Source records linked to a Trip.
+- [x] **Done when:** Crew output is persisted to Postgres as Day, Block, Source records linked to a Trip. *(Landed as PR #14, squashed to 67bc5fc; Beads `trip-concierge-dxd` closed. Also added AgentRun model + persist_audited_plan() service. CASCADE chain verified by test.)*
 - **Files to create:**
   - `backend/app/models/day.py`
   - `backend/app/models/block.py`
