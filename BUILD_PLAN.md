@@ -111,12 +111,12 @@ If a slice runs over 3 sessions, decompose it into sub-slices in a new PR before
 
 ### Slice 2.4: Day + Block + Source models and migrations
 
-- [x] **Done when:** Crew output is persisted to Postgres as Day, Block, Source records linked to a Trip. *(Landed as PR #14, squashed to 67bc5fc; Beads `trip-concierge-dxd` closed. Also added AgentRun model + persist_audited_plan() service. CASCADE chain verified by test.)*
+- [x] **Done when:** Crew output is persisted to Postgres as Day, Block, Source records linked to a Trip. *(Landed as PR #14, squashed to 67bc5fc; Beads `trip-concierge-dxd` closed. Also added AgentRun model + persist_audited_plan() service. CASCADE chain verified by test. AgentRun model was later replaced by JobRun in slice 2.5b — see migration 0004.)*
 - **Files to create:**
   - `backend/app/models/day.py`
   - `backend/app/models/block.py`
   - `backend/app/models/source.py`
-  - `backend/app/models/agent_run.py`
+  - `backend/app/models/agent_run.py` *(replaced by `job_run.py` in slice 2.5b)*
   - migration `0002_days_blocks_sources.py`
 - **Tests:** crew run for a synthetic trip creates the expected row counts.
 
@@ -133,7 +133,7 @@ The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic —
   - A backend integration test calls the agents service via `httpx` (TestClient against the agents FastAPI app, mocked `crew.run`) and verifies the response validates as `trip_agents.schemas.AuditedPlan`.
   - Backend can `from trip_agents.schemas import …` via the workspace path.
   - `make dev`, `make test`, `make check` all work across the workspace.
-- **Not in scope:** Redis, arq, job queue, status polling, AgentRun writes, backend's HTTP route to `/trips/{id}/plan`. Those are 2.5b/c.
+- **Not in scope:** Redis, arq, job queue, status polling, JobRun writes, backend's HTTP route to `/trips/{id}/plan`. Those are 2.5b/c.
 - **Beads:** `trip-concierge-q9o`.
 
 #### Slice 2.5b: Redis + arq job queue for crew runs
@@ -142,9 +142,9 @@ The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic —
   - `redis` service added to `docker-compose.yml`.
   - `arq` pinned exact in both `backend/` and `agents/`.
   - `POST /trips/{id}/plan` on backend enqueues an arq job, returns **202 Accepted** with `{job_id, status_url}` in **< 1 second** (the user-facing latency target).
-  - An arq worker (process launched alongside the agents service) consumes jobs, runs the 4-agent crew, calls `persist_audited_plan()`, and writes `AgentRun` rows with token counts, costs, and durations.
+  - An arq worker (process launched from `make backend.worker` — worker lives in backend, not agents, because it needs DB access) consumes jobs, runs the 4-agent crew, calls `persist_audited_plan()`, and writes **one** `JobRun` row per job (success/failed/cancelled). Per-agent observability comes from `JobRun.agent_summary` (JSONB populated via CrewAI's step_callback) — not per-agent rows. v2.0 question if we ever need finer grain.
   - `make dev` (or new `make worker`) launches the worker.
-  - Integration test (offline, mocked `crew.run`): enqueue → in-process worker drains queue → fetch trip and assert days/blocks persisted + AgentRun rows present.
+  - Integration test (offline, mocked `crew.run`): enqueue → in-process worker drains queue → fetch trip and assert days/blocks persisted + JobRun row present.
   - CI: redis service container alongside postgres in `ci.yml`.
   - Langfuse traces include queue wait time as a distinct span.
 - **Not in scope:** status polling endpoint (2.5c), cancellation, per-agent progress messages.
@@ -155,7 +155,7 @@ The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic —
 - [ ] **Done when:**
   - `GET /trips/{trip_id}/plan/status` returns `{state, progress_message, started_at, finished_at, error, trip_url}` where state ∈ {queued, running, done, failed}.
   - The arq worker updates `progress_message` before each agent kickoff: `"researching candidates"`, `"narrowing to best fits"`, `"building day-by-day plan"`, `"audit pass 1"`, `"audit pass 2"` (if reached).
-  - `DELETE /trips/{trip_id}/plan` cancels an in-flight job: 204 on cancel, 404 if no job, 409 if already done. Cancelled jobs don't write AgentRun rows for incomplete passes.
+  - `DELETE /trips/{trip_id}/plan` cancels an in-flight job: 204 on cancel, 404 if no job, 409 if already done. Cancelled jobs write a JobRun row with status=cancelled and whatever agent_summary the step_callback captured before cancellation.
   - Integration test: enqueue → poll three times → observe queued → running → done; last poll has `trip_url`.
   - Integration test: enqueue → cancel mid-flight → status reports `failed` with `error="cancelled by user"`.
   - OpenAPI docs at `/docs` show the status schema.
@@ -250,7 +250,7 @@ The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic —
 
 ### Slice 4.8: Visible agent activity panel
 
-- [ ] **Done when:** Collapsible "How this plan was made" panel at the top of each day shows the agent activity from the `AgentRun` records.
+- [ ] **Done when:** Collapsible "How this plan was made" panel at the top of each day shows the agent activity from the `JobRun.agent_summary` JSONB column (one row per planning job, per-agent events captured via CrewAI step_callback).
 - **Files to create:** `web/components/AgentActivity.tsx`
 - **Tests:** rendering with mocked agent run data.
 

@@ -63,8 +63,8 @@ def persist_audited_plan(
                     ],
                 },
             ],
-            ...  # audit metadata (approved, revision_log, etc.) — slice 2.5 persists this
-                 # to AgentRun rows; this function only writes itinerary content.
+            ...  # audit metadata (approved, revision_log, etc.) — slice 2.5b persists this
+                 # to JobRun rows from the arq worker; this function only writes itinerary content.
         }
     """
     # Wipe existing Days for this trip; CASCADE handles Blocks + Sources.

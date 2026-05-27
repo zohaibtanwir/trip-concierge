@@ -14,7 +14,11 @@ from typing import Literal
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+# config.py lives at agents/src/trip_agents/config.py — repo root is THREE
+# parents up (was two pre-src-layout). Slice 2.5a missed this; the env-file
+# fallback was silently pointing at a nonexistent path. Shell env still won,
+# which is why nothing visibly broke.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _BACKEND_ENV = _REPO_ROOT / "backend" / ".env"
 
 
@@ -38,6 +42,11 @@ class Settings(BaseSettings):
     langfuse_host: str = Field(
         default="https://cloud.langfuse.com",
         validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+    )
+
+    redis_url: str = Field(
+        default="redis://localhost:6379",
+        validation_alias="REDIS_URL",
     )
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(

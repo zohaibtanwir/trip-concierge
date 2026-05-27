@@ -1,6 +1,11 @@
-# Local Postgres for dev and tests. Matches what we'd deploy on Fly/Hetzner.
-# pgvector image bundles Postgres 16 + the vector extension we'll need in
-# Phase 1.4+ for BYO research embeddings.
+# Local Postgres + Redis for dev and tests. Match what we'll deploy.
+# pgvector image bundles Postgres 16 + vector extension. Redis 7.4 is
+# the broadly-deployed prod target (8.x shipped May 2025 with license +
+# Redis Stack behavioral changes — not the v1.0 default).
+#
+# Both images pinned to digest so dev/CI/prod resolve to byte-identical
+# layers regardless of when pull happens. Bumping is a deliberate commit.
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -19,5 +24,22 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952
+    container_name: trip-concierge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - trip_concierge_redisdata:/data
+    # Append-only persistence is fine for queue/cache; we don't need RDB
+    # snapshots for ephemeral arq job state.
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
 volumes:
   trip_concierge_pgdata:
+  trip_concierge_redisdata:

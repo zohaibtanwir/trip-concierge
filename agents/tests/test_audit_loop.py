@@ -123,7 +123,7 @@ def test_revised_plan_is_fed_forward_into_next_pass() -> None:
     pass_2 = _audited(True, ["ok"])
     calls: list[TripPlan] = []
 
-    def _capture(plan, constraints, currency, pass_num):  # noqa: ANN001
+    def _capture(plan, constraints, currency, pass_num, step_callback=None):  # noqa: ANN001
         calls.append(plan)
         return [pass_1, pass_2][pass_num - 1]
 

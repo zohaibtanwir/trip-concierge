@@ -119,7 +119,7 @@ trip-concierge/
 │   │   ├── main.py            # FastAPI entry
 │   │   ├── config.py
 │   │   ├── routes/
-│   │   ├── models/            # SQLAlchemy models (Trip, Day, Block, Source, AgentRun, User)
+│   │   ├── models/            # SQLAlchemy models (Trip, Day, Block, Source, JobRun, User)
 │   │   ├── schemas/           # Pydantic schemas (HTTP layer)
 │   │   ├── services/
 │   │   └── db/
