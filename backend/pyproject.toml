@@ -11,12 +11,20 @@ dependencies = [
     "psycopg[binary]==3.3.4",
     "pydantic==2.12.5",
     "pydantic-settings==2.10.1",
+    # PyJWT for MCP token signing/verifying. Chose over python-jose because
+    # of better maintenance and a cleaner security advisory history.
+    "pyjwt==2.13.0",
     "pytest==9.0.3",
     "python-dotenv==1.2.2",
     "sqlalchemy==2.0.50",
     "trip-concierge-agents",
     "uvicorn==0.48.0",
 ]
+
+[project.scripts]
+# Dev-only CLI for issuing MCP JWTs. Used during slices 3.1 → 4.0 while
+# the production magic-link flow is unbuilt (lands in slice 4.1).
+tc-issue-mcp-token = "app.cli.issue_mcp_token:main"
 
 [tool.uv.sources]
 trip-concierge-agents = { workspace = true }
