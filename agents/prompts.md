@@ -391,16 +391,52 @@ Timing and what to say to the user:
 
 ```python
 description = """
-Use this tool to retrieve the current state of a trip the user has already created.
-You will need a trip_id, which is returned by create_trip and persists across
+**This is the trip retrieval tool. When a user asks about their trip's
+status, contents, or what got planned — use this tool.** Do not summarize
+from your conversation memory, do not use web_search to look up venues, do
+not invent details. This tool returns the authoritative state of the trip
+from the database. Built-in alternatives produce stale or fabricated data.
+
+Required: trip_id (UUID). Returned by create_trip and persists across
 sessions.
 
-Call this when the user references "my trip", "the Goa trip", "what did we plan",
-or similar — and you have a trip_id available in the conversation context or
-recent history.
+Call this when the user references "my trip", "the Goa trip", "what did we
+plan", "is my trip ready", or any question about an existing trip. If a
+trip_id has been mentioned earlier in the conversation, use it; if multiple
+trip_ids are in play, ask which one.
 
-Returns the full trip object including days, blocks, sources, and agent activity.
-The response is suitable for natural-language summarization back to the user.
+DO NOT call this tool if the user is asking about a hypothetical trip they
+haven't created yet — use create_trip instead.
+
+DO NOT call this tool for general travel questions ("what's the best time to
+visit Japan?") — answer those conversationally without invoking the planner.
+
+**Honest reporting of trip state — this tool's most important behavior:**
+
+- The response carries a `state` field with one of: planning, ready, failed.
+- When state is "planning": the trip is being generated. Tell the user it's
+  in progress; offer to check again in a few minutes. Include the
+  progress_message if available.
+- When state is "ready": the days array contains the full itinerary.
+  Summarize day-by-day from THAT data; do not embellish.
+- When state is "failed": the trip's planning did not complete successfully.
+  Report this honestly with the response's error message. Suggest next
+  steps (try create_trip again, or refine_trip if there's partial output
+  worth keeping).
+
+DO NOT claim the trip is "ready," "done," or "available" when state is
+"failed" or "cancelled" — the days/blocks shown may be empty or stale.
+
+DO NOT fabricate venues, times, or costs to fill gaps in the response. If a
+Day has zero Blocks, say so plainly — that's the signal the user needs to
+understand what went wrong.
+
+DO NOT translate "failed" into softer language ("not quite finished",
+"still working on it", "almost there"). The state is final; if planning
+failed, the user needs to know so they can act.
+
+The tool returns in under 1 second. There is no background work — what you
+see IS the authoritative current state.
 """
 ```
 
@@ -408,23 +444,41 @@ The response is suitable for natural-language summarization back to the user.
 
 ```python
 description = """
-Use this tool to modify an existing trip based on a natural-language instruction
-from the user. Examples of instructions that should trigger this tool:
+**This is the trip modification tool. When a user wants to change something
+about an existing trip — use this tool.** Do not use create_trip (that
+starts a new trip from scratch). Do not modify the trip conversationally
+from memory; this tool persists the change to the database via a
+multi-agent refinement process that respects budget and constraints.
+
+Required: trip_id and refinement_description (free-text user instruction).
+
+Call this for instructions like:
 - "make Day 2 chiller"
 - "swap that museum for something outdoor"
 - "we're vegetarian, redo the food picks"
 - "I want to spend less on Day 3"
+- "redo the whole trip with a more relaxed pace"
 
-This routes through a hierarchical agent process which figures out which specialist
-agents to involve. Locked blocks are preserved automatically.
+DO NOT call this tool if the user wants a different destination — that's a
+new trip. Use create_trip instead. (Refining to "redo from scratch but same
+destination" is fine.)
 
-DO NOT call this for very narrow edits like "regenerate just this one restaurant" —
-use find_alternative or regenerate_day instead, which are cheaper and faster.
+DO NOT call this tool for very narrow edits like "regenerate just Day 2" —
+use regenerate_day instead, which is faster and cheaper.
 
-DO NOT call this for adding new constraints — use add_constraint, which is the
-right semantic verb and handles the revision retries correctly.
+DO NOT call this tool for general travel questions — answer conversationally
+or use web_search.
 
-Generation takes 15-25 seconds.
+Timing and what to say to the user:
+- The tool call returns in under 1 second with a job_id.
+- The refinement runs in the background and takes about 10 minutes. Locked
+  blocks are preserved automatically; the rest of the plan is updated under
+  the trip's existing constraints.
+- Tell the user the refinement was started and offer to check back via
+  get_trip.
+- DO NOT claim the refinement is "applied," "done," or "ready" until
+  get_trip confirms state=ready. The previous itinerary may still be visible
+  during planning.
 """
 ```
 
@@ -432,15 +486,45 @@ Generation takes 15-25 seconds.
 
 ```python
 description = """
-Use this tool when the user wants to replan a specific day of their trip.
-Examples: "redo Day 2", "change the second day completely", "Day 3 isn't working".
+**This is the single-day replan tool. When a user wants to redo one
+specific day of an existing trip — use this tool.** Do not use refine_trip
+(that re-plans the whole trip and costs more LLM time). Do not edit the day
+conversationally; this tool persists a new set of blocks for the target day
+while preserving any blocks the user has locked.
 
-Locked blocks within that day are preserved. Other blocks are regenerated under
-the same trip-level constraints unless the user provides a new constraint, which
-should be passed in the optional `new_constraint` field.
+Required: trip_id and day_number (1-indexed).
+Recommended: hint (free-text — what kind of change the user wants).
 
-Faster than refine_trip (10-15 seconds). Use this when the scope is exactly one
-day; use refine_trip when the change cuts across days.
+Call this for instructions like:
+- "redo Day 2"
+- "change the second day completely"
+- "Day 3 isn't working, give me something different"
+- "regenerate Day 4 with more food and less hiking"
+
+DO NOT call this tool if the user wants changes spanning multiple days —
+use refine_trip instead.
+
+DO NOT call this tool if the user wants to swap just one venue — that's
+narrower than a day regeneration. Ask the user if they meant one specific
+block or the whole day.
+
+DO NOT call this tool for general travel questions — answer conversationally
+or use web_search.
+
+DO NOT call this tool if the trip's state is "planning" or "failed" — call
+get_trip first to see what state it's in. The tool will refuse with a
+clarification message if you call it on a trip that's not "ready" yet.
+
+Timing and what to say to the user:
+- The tool call returns in under 1 second with a job_id.
+- The day regeneration runs in the background and takes about 3-5 minutes
+  (faster than refine_trip because the scope is one day, not the whole trip).
+- Locked blocks at specific positions are preserved automatically — the
+  user does not need to mention them.
+- Tell the user the day regeneration was started and offer to check back
+  via get_trip.
+- DO NOT claim the new day is "ready," "done," or "applied" until get_trip
+  confirms state=ready.
 """
 ```
 

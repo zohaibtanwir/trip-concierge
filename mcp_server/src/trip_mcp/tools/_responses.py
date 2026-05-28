@@ -16,6 +16,7 @@ backend/app/routes/auth.py use for slice 4.1.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 
 def format_created_trip(
@@ -91,3 +92,165 @@ def format_clarification_needed(missing: list[str]) -> str:
             "What did you have in mind?"
         )
     return f"I need more information to plan this trip: {', '.join(missing)}."
+
+
+# ---------------------------------------------------------------------------
+# Slice 3.3 commit 5: response formatters for get_trip, refine_trip,
+# regenerate_day. The state-aware formatters in this section embody the
+# slice thesis (visibility before reliability) — get_trip's failed-state
+# response carries the prohibition-honoring language the §4.2 description
+# tells the LLM to use.
+# ---------------------------------------------------------------------------
+
+
+def format_trip_planning(
+    *,
+    trip_id: uuid.UUID,
+    destination: str,
+    progress_message: str | None,
+) -> str:
+    """get_trip response when state ∈ {queued, running, cancelling}."""
+    progress_line = ""
+    if progress_message:
+        progress_line = f"Current step: {progress_message}\n\n"
+    return (
+        f"Your {destination} trip (id {trip_id}) is still being planned.\n"
+        f"\n"
+        f"{progress_line}"
+        f"The full itinerary should be available in a few more minutes. "
+        f"Ask me to check again then."
+    )
+
+
+def format_trip_succeeded(full_trip: dict[str, Any]) -> str:
+    """get_trip response when state=done and approved=true.
+
+    Renders the day-by-day itinerary from the actual data. NO fabrication —
+    if a Day has zero Blocks, the response says so plainly.
+    """
+    trip_id = full_trip.get("id", "unknown")
+    destination = full_trip.get("destination", "your")
+    days = full_trip.get("days") or []
+
+    lines = [f"Your {destination} trip is ready! (id {trip_id})", ""]
+    if not days:
+        lines.append("The trip has no days planned — this is unusual; the data may be incomplete.")
+    else:
+        for day in days:
+            day_num = day.get("day_number", "?")
+            date = day.get("date") or ""
+            date_part = f" ({date})" if date else ""
+            lines.append(f"Day {day_num}{date_part}:")
+            blocks = day.get("blocks") or []
+            if not blocks:
+                lines.append("  (no blocks yet for this day)")
+            else:
+                for block in blocks:
+                    venue = block.get("venue_name", "?")
+                    start = block.get("start_time") or ""
+                    dur = block.get("duration_minutes", 0)
+                    cost = block.get("est_cost") or "0"
+                    start_part = f"{start} — " if start else ""
+                    lines.append(f"  {start_part}{venue} ({dur} min, est {cost})")
+            lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+def format_trip_failed(
+    *,
+    trip_id: uuid.UUID,
+    destination: str,
+    error: str | None,
+) -> str:
+    """get_trip response when state=failed.
+
+    Slice-thesis load-bearer — names "failed" plainly, no softer language,
+    offers concrete next steps. Per §4.2 description: the LLM is told to
+    surface this verbatim.
+    """
+    error_line = ""
+    if error:
+        # Strip the "ClassName: " prefix if present; keep the human message.
+        msg = error.split(":", 1)[-1].strip() if ":" in error else error
+        error_line = f"What went wrong: {msg[:200]}\n\n"
+    return (
+        f"Your {destination} trip's planning didn't complete successfully (id {trip_id}).\n"
+        f"\n"
+        f"{error_line}"
+        f"You can try create_trip again to start over, or refine_trip if "
+        f"you want to adjust the inputs and retry."
+    )
+
+
+def format_trip_not_found(trip_id: uuid.UUID) -> str:
+    """get_trip response when backend returned 404."""
+    return (
+        f"I couldn't find trip {trip_id}. It may have been deleted, or the "
+        f"id may be wrong. Want to start a new one with create_trip?"
+    )
+
+
+def format_refine_enqueued(*, trip_id: uuid.UUID, destination: str) -> str:
+    """refine_trip response when POST /refine returns 202."""
+    return (
+        f"Started refining your {destination} trip (id {trip_id}).\n"
+        f"\n"
+        f"The refinement runs in the background and takes about 10 minutes. "
+        f"Locked blocks are preserved automatically. Ask me to check the "
+        f"trip status via get_trip in a few minutes."
+    )
+
+
+def format_refine_failed(*, trip_id: uuid.UUID, reason: str) -> str:
+    """refine_trip response when the backend POST didn't return 202."""
+    return (
+        f"I couldn't start the refinement for trip {trip_id} — {reason}.\n"
+        f"\n"
+        f"Want to try again with different wording?"
+    )
+
+
+def format_regenerate_enqueued(*, trip_id: uuid.UUID, day_number: int, destination: str) -> str:
+    """regenerate_day response when POST /regenerate returns 202."""
+    return (
+        f"Started regenerating Day {day_number} of your {destination} trip "
+        f"(id {trip_id}).\n"
+        f"\n"
+        f"This takes about 3-5 minutes — faster than a full refinement "
+        f"because the scope is one day. Locked blocks are preserved. Ask "
+        f"me to check the trip status via get_trip in a few minutes."
+    )
+
+
+def format_regenerate_failed(*, trip_id: uuid.UUID, reason: str) -> str:
+    return (
+        f"I couldn't start the regeneration for trip {trip_id} — {reason}.\n"
+        f"\n"
+        f"Want to try again, or check the trip status via get_trip first?"
+    )
+
+
+def format_regenerate_day_not_ready(state: str) -> str:
+    """Pre-call gate refusal — slice 3.3 commit 4 design Q3.
+
+    When regenerate_day is called on a trip whose state isn't 'done', we
+    refuse here before any HTTP enqueue. Saves a backend round-trip and
+    surfaces a clear next-step the LLM can echo to the user.
+    """
+    if state in ("queued", "running"):
+        return (
+            "I can't regenerate a day yet — the trip is still being planned. "
+            "Try get_trip in a few minutes; once it's ready I can regenerate "
+            "any day you want."
+        )
+    if state == "failed":
+        return (
+            "I can't regenerate a day on a trip whose initial planning didn't "
+            "complete. Try create_trip again from scratch, or refine_trip if "
+            "you want to adjust the inputs."
+        )
+    return (
+        "This trip is in a state I can't regenerate from — likely cancelled "
+        "or no longer active. Use create_trip to start fresh."
+    )
