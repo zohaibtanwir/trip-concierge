@@ -249,3 +249,111 @@ class RegenerateDayInput(BaseModel):
             "Leave unset if the user didn't give a specific hint."
         ),
     )
+
+
+class AddConstraintInput(BaseModel):
+    """Input for the add_constraint MCP tool — slice 3.4a commit 5.
+
+    Mirrors backend AddConstraintRequest (app/routes/constraints.py). The
+    backend re-validates; this schema is what Claude Desktop reads to
+    populate fields.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(description="The trip's UUID.")
+    constraint_text: str = Field(
+        min_length=3,
+        max_length=500,
+        description=(
+            "Free-text statement of the constraint, verbatim from the user. "
+            'Examples: "I\'m vegetarian", "no nightclubs", "₹3000/day '
+            'cap", "we can\'t walk more than 5km in a day". Extract the '
+            "user's wording — don't paraphrase. Used both as the dedup key "
+            "and as the prompt-facing language."
+        ),
+    )
+    constraint_kind: str = Field(
+        default="custom",
+        description=(
+            "One of: budget, dietary, mobility, no_go, walking_limit, "
+            "custom. Pick the closest fit; default 'custom' if uncertain. "
+            "Examples: 'I'm vegetarian' → dietary, 'no nightclubs' → "
+            "no_go, '₹3000/day cap' → budget, 'we can't walk more than "
+            "5km' → walking_limit, 'home before midnight' → custom."
+        ),
+    )
+
+
+class FindAlternativeInput(BaseModel):
+    """Input for the find_alternative MCP tool — slice 3.4a commit 5.
+
+    block_id MUST come from a real trip's data (get_trip). The
+    description here is one half of the layered UUID-hallucination
+    defense; the task prompt (§3.7) is the other half. See the
+    "Why 'Do NOT generate UUIDs' twice" rationale in agents/prompts.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(description="The trip's UUID.")
+    block_id: str = Field(
+        description=(
+            "The UUID of the specific block to replace. MUST be a real "
+            "block_id from the trip's data — get it from get_trip's "
+            "output. DO NOT synthesize a UUID-shaped string from "
+            "context, prior turns, or your own generation; if you don't "
+            "have a real block_id, call get_trip first. The backend "
+            "rejects (404) any block_id not on this trip."
+        ),
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Optional short free-text reason for the swap — e.g., 'closed "
+            "for renovations', 'too expensive', 'bad reviews'. Helps the "
+            "ranking but is not required. Leave unset if the user didn't "
+            "give a specific reason."
+        ),
+    )
+
+
+class Alternative(BaseModel):
+    """One ranked alternative venue produced by find_alternative.
+
+    Slice 3.4a commit 3. Per agents/prompts.md §3.7, the Researcher is
+    instructed to produce real venues with citations — `source_urls`
+    non-empty + a substantive `rationale` are the load-bearing fields
+    that distinguish a real recommendation from a fabrication.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    venue_name: str = Field(min_length=1)
+    type: Literal["venue", "meal", "activity", "transit", "rest"]
+    duration_minutes: int = Field(gt=0)
+    est_cost: float = Field(ge=0)
+    currency: str = Field(min_length=3, max_length=3)
+    source_urls: list[str] = Field(min_length=1)
+    rationale: str = Field(min_length=10)
+
+
+class AlternativesList(BaseModel):
+    """find_alternative output — exactly 3 ranked alternatives.
+
+    The min_length=max_length=3 constraint is the load-bearing schema-layer
+    enforcement of §3.7's "Return exactly 3 alternatives" instruction.
+    If the crew drifts to 2 or 4 items, output_pydantic validation fails
+    and crew.find_alternative raises a clear error rather than silently
+    returning degraded output.
+
+    Belt and suspenders against LLM drift:
+    1. Task prompt (§3.7) says "Return exactly 3 alternatives".
+    2. AlternativesList schema enforces it via Field(min_length=3, max_length=3).
+    3. _extract_alternatives_list helper in crew.py surfaces the failure.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    alternatives: list[Alternative] = Field(min_length=3, max_length=3)

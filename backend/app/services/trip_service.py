@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from datetime import date as date_type
 from decimal import Decimal
 from typing import Any
@@ -186,3 +187,56 @@ def _to_decimal(raw: Any) -> Decimal | None:
     if raw is None:
         return None
     return Decimal(str(raw))
+
+
+def append_constraint(
+    db: Session,
+    *,
+    trip_id: uuid.UUID,
+    kind: str,
+    value: Any,
+    raw_text: str,
+) -> Trip:
+    """Append a constraint to Trip.constraints["rules"] with (kind, value) dedup.
+
+    Slice 3.4a Q1: the wrap pattern. Trip.constraints stays a flexible
+    JSONB dict; we add a "rules" key (list of constraint dicts) without
+    disturbing any other keys the column may hold. Dedup compares
+    (kind, value) only — raw_text and created_at vary per call and must
+    not defeat the dedup invariant.
+
+    First-call raw_text wins on dedup: a user re-sending "I'm vegetarian"
+    with slightly different wording doesn't overwrite the original.
+
+    Raises ValueError on unknown trip_id — failing loudly surfaces an
+    invariant break in the caller rather than silently no-op'ing.
+    """
+    trip = db.get(Trip, trip_id)
+    if trip is None:
+        raise ValueError(f"trip {trip_id} not found")
+
+    # Copy so SQLAlchemy notices the JSONB mutation. dict.copy() is enough
+    # because we replace the "rules" key entirely; we don't mutate nested
+    # dicts in place.
+    constraints = dict(trip.constraints or {})
+    rules: list[dict[str, Any]] = list(constraints.get("rules") or [])
+
+    # Dedup by (kind, value). First-call raw_text and created_at preserved.
+    for existing in rules:
+        if existing.get("kind") == kind and existing.get("value") == value:
+            return trip  # no-op
+
+    rules.append(
+        {
+            "kind": kind,
+            "value": value,
+            "raw_text": raw_text,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    constraints["rules"] = rules
+    trip.constraints = constraints
+    db.add(trip)
+    db.commit()
+    db.refresh(trip)
+    return trip

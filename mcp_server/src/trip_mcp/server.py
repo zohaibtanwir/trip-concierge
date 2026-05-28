@@ -30,14 +30,18 @@ import httpx
 import mcp.types as types
 from mcp.server import Server
 from trip_agents.schemas import (
+    AddConstraintInput,
     CreateTripInput,
+    FindAlternativeInput,
     GetTripInput,
     RefineTripInput,
     RegenerateDayInput,
 )
 
 from trip_mcp.config import backend_url
+from trip_mcp.tools import add_constraint as add_constraint_tool
 from trip_mcp.tools import create_trip as create_trip_tool
+from trip_mcp.tools import find_alternative as find_alternative_tool
 from trip_mcp.tools import get_trip as get_trip_tool
 from trip_mcp.tools import refine_trip as refine_trip_tool
 from trip_mcp.tools import regenerate_day as regenerate_day_tool
@@ -95,6 +99,16 @@ async def list_tools() -> list[types.Tool]:
             description=regenerate_day_tool.DESCRIPTION,
             inputSchema=RegenerateDayInput.model_json_schema(),
         ),
+        types.Tool(
+            name="add_constraint",
+            description=add_constraint_tool.DESCRIPTION,
+            inputSchema=AddConstraintInput.model_json_schema(),
+        ),
+        types.Tool(
+            name="find_alternative",
+            description=find_alternative_tool.DESCRIPTION,
+            inputSchema=FindAlternativeInput.model_json_schema(),
+        ),
     ]
 
 
@@ -117,6 +131,20 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             trip_id=uuid.UUID(arguments["trip_id"]),
             day_number=int(arguments["day_number"]),
             hint=arguments.get("hint"),
+        )
+        return [types.TextContent(type="text", text=text)]
+    if name == "add_constraint":
+        text = await add_constraint_tool.add_constraint(
+            trip_id=uuid.UUID(arguments["trip_id"]),
+            constraint_text=arguments["constraint_text"],
+            constraint_kind=arguments.get("constraint_kind", "custom"),
+        )
+        return [types.TextContent(type="text", text=text)]
+    if name == "find_alternative":
+        text = await find_alternative_tool.find_alternative(
+            trip_id=uuid.UUID(arguments["trip_id"]),
+            block_id=uuid.UUID(arguments["block_id"]),
+            reason=arguments.get("reason"),
         )
         return [types.TextContent(type="text", text=text)]
     raise ValueError(f"unknown tool: {name}")

@@ -350,6 +350,67 @@ The crew DOES receive `locked_blocks` as read-only context so it can plan around
 
 ---
 
+### 3.7 find_alternative_task
+
+```python
+find_alternative_task = Task(
+    description=(
+        "The user wants to replace one specific block in their existing "
+        "trip. Produce 3 alternatives that fit the trip's context and "
+        "constraints.\n\n"
+        "Trip context: destination={destination}, currency={currency}.\n"
+        "Block to replace: type={block_type}, original "
+        "venue={block_venue_name}, duration={block_duration_minutes} "
+        "minutes, slot time={block_start_time}.\n"
+        "User's reason for swap (may be empty): {reason}.\n"
+        "Trip constraints to respect (rank alternatives by fit to "
+        "these): {constraints_summary}.\n\n"
+        "Return exactly 3 alternatives, ranked by fit (best first). "
+        "For each: venue_name, type (same as the block being replaced "
+        "— venue/meal/activity/transit/rest), an estimated "
+        "duration_minutes (close to the original block's duration is "
+        "best), est_cost in {currency}, source_urls (at least one), "
+        "and a one-line rationale explaining why this venue fits this "
+        "user given the listed constraints.\n\n"
+        "Do NOT generate UUIDs, block IDs, or any IDs in your output "
+        "— those are handled by the caller. Focus your effort on real "
+        "venue research (Tavily search is enabled) and ranking. If you "
+        "cite a venue, you MUST have a source URL for it; do not "
+        "invent venues you can't cite."
+    ),
+    agent=researcher,
+    expected_output=(
+        "JSON matching the AlternativesList schema: an `alternatives` "
+        "array of exactly 3 items. Each item has: venue_name (string), "
+        "type (one of venue|meal|activity|transit|rest, matching the "
+        "block being replaced), duration_minutes (integer, close to "
+        "the original block's duration), est_cost (number), currency "
+        "(3-letter ISO code), source_urls (non-empty array of URLs), "
+        "rationale (short string explaining the fit). Do NOT include "
+        "any UUIDs or block_ids."
+    ),
+    output_pydantic=AlternativesList,
+)
+```
+
+**Why Researcher alone (not Local Expert too):**
+
+Slice 3.4a chose Option B (Researcher-alone, single-agent `Process.sequential`) over Option A (Researcher → Local Expert, two-agent sequential). The decision criteria were wall-time variance under the slice's 90s sync-route timeout and the size of the task.
+
+- **Wall-time budget.** find_alternative runs synchronously inside an MCP request — the 90s timeout is a hard ceiling, not a soft target. Each additional crew agent adds an LLM hop (~10-25s p50, longer p99 with tool calls). A two-agent chain that p99s past 90s would tail-cut the user's MCP turn. Researcher-alone keeps the worst-case bounded.
+- **Task surface area.** find_alternative is "3 venues that fit constraints" — narrower than the full initial-generation flow where Local Expert's "why this, not that" reasoning earns its keep against tourist-trap selection. For one swap, the marginal quality from a second pass is small; the variance cost is not.
+- **Reassessment path.** Tracked as trip-concierge-5yw. After Claude Desktop validation surfaces real quality data on Researcher-alone alternatives, we'll decide whether to upgrade. The trade-off is reversible — adding Local Expert is a description-and-context edit, not a refactor.
+
+**Why "Do NOT generate UUIDs" appears twice (task + field):**
+
+The prohibition lives at two layers: in this task description (above) and in the MCP tool's `FindAlternativeInput.block_id` field description (§4.7). Belt-and-suspenders, intentional.
+
+- **Task-level catches the crew.** Without explicit prohibition, Researcher LLMs hallucinate `block_id: "uuid-here"` strings into the structured output ~15% of the time per slice 3.3's regenerate_day observation. The schema would accept the extra field (Alternative has `extra="allow"`) and downstream code would silently break on the bogus IDs.
+- **Field-level catches the caller LLM.** The MCP host (Claude Desktop) reads tool parameter docs to decide what to send. Without "MUST be a real block_id from the trip", the host can synthesize a UUID-shaped string from context and call with garbage. The 404 path is loud but the wasted turn is real.
+- **Same principle as locked-block exclusion (§3.6).** When the model cannot generate something, it cannot accidentally generate it wrong. Schema-layer enforcement (Alternative excludes a `block_id` field) plus prompt prohibition is more robust than either alone.
+
+---
+
 ## 4. MCP Tool Descriptions
 
 These descriptions are what Claude Desktop and ChatGPT read to decide *when* to call each tool. Write them from the LLM's perspective. Tell it both when to call and when **not** to call.
@@ -532,18 +593,45 @@ Timing and what to say to the user:
 
 ```python
 description = """
-Use this tool when the user states a new hard constraint they want enforced across
-the whole trip. Examples:
-- "actually we have a ₹3000/day cap"
-- "I just remembered, I'm vegetarian"
-- "no nightclubs"
-- "we can't walk more than 5km in a day"
+**This is the new-constraint tool. When a user states a constraint they
+want enforced across the whole trip — use this tool.** Do not store the
+constraint conversationally from memory; this tool persists it to the
+trip and re-audits the existing plan against it.
 
-The tool adds the constraint and triggers a re-audit of the existing trip. If the
-trip now violates the constraint, you'll receive a list of suggested revisions.
+Required: trip_id and constraint_text (verbatim from the user).
+Optional: constraint_kind — one of "budget", "dietary", "mobility",
+"no_go", "walking_limit", "custom". Pick the closest fit; default
+"custom" if uncertain.
 
-DO NOT use this for one-off preferences ("I don't want sushi tomorrow") — those
-are scope-of-one-day and belong in regenerate_day with a new_constraint.
+Call this for instructions like:
+- "actually we have a ₹3000/day cap" → constraint_kind="budget"
+- "I just remembered, I'm vegetarian" → constraint_kind="dietary"
+- "no nightclubs" → constraint_kind="no_go"
+- "we can't walk more than 5km in a day" → constraint_kind="walking_limit"
+- "we want to be home before midnight every night" → constraint_kind="custom"
+
+DO NOT use this tool for one-off preferences scoped to a single day
+("I don't want sushi tomorrow", "skip the museum on Day 2") — those
+belong in regenerate_day with a hint.
+
+DO NOT use this tool to RELAX a prior constraint ("never mind the
+budget"). v1.0 only supports additive constraints. If the user asks
+to remove a constraint, tell them this isn't supported yet and offer
+to start a new trip via create_trip.
+
+DO NOT call this tool for general travel advice — answer
+conversationally or use web_search.
+
+Timing and what to say to the user:
+- The tool call returns in under 1 second with a job_id.
+- The re-audit runs in the background and takes about 10 minutes
+  (same as refine_trip — the new constraint is merged with all prior
+  constraints and the Auditor re-validates the entire plan).
+- Tell the user the constraint was added and a re-audit is running.
+  Offer to check back via get_trip.
+- DO NOT claim the trip "now satisfies" the new constraint until
+  get_trip confirms state=ready. The previous itinerary may still
+  show blocks that violate the new constraint during the re-audit.
 """
 ```
 
@@ -575,17 +663,50 @@ DO NOT call this for booking confirmations, hotel emails, or transactional conte
 
 ```python
 description = """
-Use this tool when the user wants to replace exactly ONE block in the trip.
-Examples:
+**This is the single-block swap tool. When a user wants to replace
+exactly ONE block in an existing trip — use this tool.** Do not use
+regenerate_day (that replaces the whole day, which is more disruptive
+and slower). Do not invent alternatives conversationally; this tool
+returns 3 real venues researched with search, each with a source URL.
+
+Required: trip_id and block_id. block_id MUST be a real UUID from the
+trip's data — get it from get_trip; DO NOT synthesize a UUID-shaped
+string from context. If you don't have a block_id, call get_trip first.
+
+Optional: reason — short free-text explaining why the user wants to
+swap this block (e.g., "closed for renovations", "too expensive",
+"bad reviews"). Helps the ranking but is not required.
+
+Call this for instructions like:
 - "this restaurant is closed, suggest something else"
 - "I don't want to do the museum, what else is there?"
 - "give me three other options for Day 2 dinner"
-
-You need both trip_id and block_id. Returns 3 alternatives with rationales, ranked
-by fit to the user's constraints. The user picks one; if they pick, follow up
-with a refine_trip call that includes the chosen alternative.
+- "swap the 7pm spot for something quieter"
 
 DO NOT use this for replanning a whole day — use regenerate_day.
+DO NOT use this for replanning the whole trip — use refine_trip.
+DO NOT use this for hypothetical "what if" questions — answer
+conversationally.
+
+DO NOT call this tool if the trip isn't ready yet. The tool will
+refuse with a clarification message if you call it on a trip whose
+initial planning isn't complete (state ∈ {queued, running, failed,
+cancelled, never_planned}). Call get_trip first if unsure.
+
+Timing and what to say to the user:
+- This tool runs SYNCHRONOUSLY and takes up to 90 seconds. Set the
+  user's expectation: "Let me look up alternatives — this takes about
+  a minute."
+- The response is exactly 3 ranked alternatives with source URLs and
+  one-line rationales. Present all 3 (best first) and ask the user
+  to pick one.
+- After the user picks, follow up with refine_trip describing the
+  chosen swap. find_alternative itself does NOT persist the swap.
+- DO NOT claim a venue is the "best" or "perfect" alternative — present
+  the ranking and let the user choose.
+- If the tool returns a timeout message, DO NOT retry automatically.
+  Tell the user it timed out and ask whether to try again. (Each
+  retry costs ~$0.30 in background LLM spend even on timeout.)
 """
 ```
 

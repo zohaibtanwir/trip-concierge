@@ -296,3 +296,137 @@ def test_regenerate_day_not_ready_branches_on_state() -> None:
     # Failed branch — offers create_trip/refine_trip recovery.
     failed_text = format_regenerate_day_not_ready("failed")
     assert "create_trip" in failed_text or "refine_trip" in failed_text
+
+
+# ---------------------------------------------------------------------------
+# Slice 3.4a commit 5: response formatters for add_constraint and
+# find_alternative. Eight new formatters; tests pin the shape, the
+# prohibition-discipline phrasing, and the cross-tool consistency with
+# slice-3.3 formatters.
+# ---------------------------------------------------------------------------
+
+
+def test_constraint_enqueued_echoes_text_and_routes_to_get_trip() -> None:
+    from trip_mcp.tools._responses import format_constraint_enqueued
+
+    text = format_constraint_enqueued(trip_id=_TRIP_ID, constraint_text="I'm vegetarian")
+    assert str(_TRIP_ID) in text
+    assert "vegetarian" in text
+    assert "get_trip" in text
+    assert "10 minutes" in text or "minutes" in text.lower()
+    # Prohibition discipline — must NOT claim the plan "now satisfies".
+    assert "now satisfies" not in text.lower()
+    assert "applied" not in text.lower()
+
+
+def test_constraint_failed_names_failure_without_claiming_added() -> None:
+    from trip_mcp.tools._responses import format_constraint_failed
+
+    text = format_constraint_failed(trip_id=_TRIP_ID, reason="something broke")
+    assert str(_TRIP_ID) in text
+    assert "something broke" in text
+    assert "couldn't" in text.lower() or "could not" in text.lower()
+    # Must NOT claim the constraint was added.
+    assert "added" not in text.lower() or "couldn't" in text.lower()
+
+
+def test_alternative_succeeded_renders_three_ranked_with_sources() -> None:
+    from trip_mcp.tools._responses import format_alternative_succeeded
+
+    alternatives = [
+        {
+            "venue_name": f"Spot {i}",
+            "type": "meal",
+            "duration_minutes": 60,
+            "est_cost": 600.0,
+            "currency": "INR",
+            "source_urls": [f"https://example.com/{i}"],
+            "rationale": f"fits constraint i={i} stuff stuff",
+        }
+        for i in range(1, 4)
+    ]
+    text = format_alternative_succeeded(
+        alternatives=alternatives, block_venue_name="Original Restaurant"
+    )
+
+    # 3 venues with ranking numerals.
+    for i in range(1, 4):
+        assert f"Spot {i}" in text
+        assert f"{i}." in text
+        assert f"https://example.com/{i}" in text
+
+    # Original venue named so user knows what they're replacing.
+    assert "Original Restaurant" in text
+    # Follow-up question — routes user to pick + we call refine_trip.
+    assert "which" in text.lower() or "pick" in text.lower()
+    # Prohibition discipline — must NOT claim any one is "the best".
+    assert "is the best" not in text.lower()
+    assert "perfect" not in text.lower()
+
+
+def test_alternative_active_job_surfaces_label_and_routes_to_get_trip() -> None:
+    from trip_mcp.tools._responses import format_alternative_active_job
+
+    text = format_alternative_active_job(active_job_kind="refine", active_job_id="refine-existing")
+    # Surfaces the slice-3.3 label.
+    assert "refinement" in text.lower()
+    assert "refine-existing" in text
+    assert "get_trip" in text
+    # No alternatives claimed.
+    assert "Spot" not in text
+
+
+def test_alternative_active_job_handles_unknown_kind_with_generic_label() -> None:
+    """Defensive — if backend ever returns a new JobKind we don't know
+    yet, the formatter must degrade to a generic label rather than crash.
+    """
+    from trip_mcp.tools._responses import format_alternative_active_job
+
+    text = format_alternative_active_job(active_job_kind="newkind", active_job_id="x")
+    # Some generic label, not a Python KeyError.
+    assert "background" in text.lower() or "newkind" in text.lower()
+
+
+def test_alternative_not_ready_branches_on_state() -> None:
+    from trip_mcp.tools._responses import format_alternative_not_ready
+
+    never = format_alternative_not_ready("never_planned").lower()
+    assert "hasn't been planned" in never or "not been planned" in never
+
+    failed = format_alternative_not_ready("failed").lower()
+    assert "didn't complete" in failed or "did not complete" in failed
+
+    other = format_alternative_not_ready("cancelled").lower()
+    assert "cancelled" in other or "start fresh" in other
+
+
+def test_alternative_block_not_found_routes_to_get_trip() -> None:
+    from trip_mcp.tools._responses import format_alternative_block_not_found
+
+    text = format_alternative_block_not_found(trip_id=_TRIP_ID, block_id=uuid.uuid4())
+    assert str(_TRIP_ID) in text
+    assert "get_trip" in text
+    assert "block" in text.lower()
+
+
+def test_alternative_timeout_names_failure_and_asks_user_to_retry() -> None:
+    from trip_mcp.tools._responses import format_alternative_timeout
+
+    text = format_alternative_timeout(elapsed_seconds=90.0)
+    assert "90" in text
+    # Names failure plainly.
+    assert "timed out" in text.lower() or "timeout" in text.lower()
+    # Puts retry choice on the user.
+    assert "try again" in text.lower() or "retry" in text.lower()
+    # Prohibition discipline.
+    assert "almost" not in text.lower()
+    assert "still working" not in text.lower()
+
+
+def test_alternative_failed_catchall_includes_reason() -> None:
+    from trip_mcp.tools._responses import format_alternative_failed
+
+    text = format_alternative_failed(trip_id=_TRIP_ID, reason="upstream API error")
+    assert str(_TRIP_ID) in text
+    assert "upstream API error" in text
+    assert "couldn't" in text.lower() or "could not" in text.lower()

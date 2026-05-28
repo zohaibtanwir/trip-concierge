@@ -287,3 +287,155 @@ def format_regenerate_day_not_ready(state: str) -> str:
         "This trip is in a state I can't regenerate from — likely cancelled "
         "or no longer active. Use create_trip to start fresh."
     )
+
+
+# ---------------------------------------------------------------------------
+# Slice 3.4a commit 5: response formatters for add_constraint and
+# find_alternative.
+#
+# Source of truth: app.routes.plan.KIND_LABELS — keep in sync.
+# Duplicated here to avoid a cross-project import for label data.
+# ---------------------------------------------------------------------------
+_KIND_LABELS: dict[str, str] = {
+    "plan": "planning",
+    "refine": "refinement",
+    "regen": "day-regeneration",
+}
+
+
+def format_constraint_enqueued(*, trip_id: uuid.UUID, constraint_text: str) -> str:
+    """add_constraint response when POST /constraints returns 202.
+
+    Echoes the user's constraint text verbatim so the LLM can confirm the
+    parsed value matches user intent. Routes follow-up to get_trip.
+    """
+    return (
+        f'Added your constraint to trip {trip_id}: "{constraint_text}"\n'
+        f"\n"
+        f"A re-audit is running to update the plan under this new constraint "
+        f"(and all your prior ones). This takes about 10 minutes. Ask me to "
+        f"check the trip status via get_trip in a few minutes."
+    )
+
+
+def format_constraint_failed(*, trip_id: uuid.UUID, reason: str) -> str:
+    """add_constraint response when POST /constraints didn't return 202."""
+    return (
+        f"I couldn't add the constraint to trip {trip_id} — {reason}.\n"
+        f"\n"
+        f"Want to try again with different wording?"
+    )
+
+
+def format_alternative_succeeded(
+    *,
+    alternatives: list[dict[str, Any]],
+    block_venue_name: str,
+) -> str:
+    """find_alternative response when POST /alternative returns 200.
+
+    Renders 3 ranked alternatives. Load-bearing UX:
+    - Numbered (1/2/3) so the user can pick by number
+    - Source URL on its own "Source:" line so Claude Desktop renders it
+      as a link (slice-3.3 precedent from format_created_trip's share_url)
+    - Explicit "Which one?" prompt so the LLM knows the next move is
+      refine_trip with the chosen swap
+    - No "best"/"perfect" superlatives in OUR wrapping (the rationale
+      itself may say "strong fit" — that's the crew's words, not ours)
+    """
+    lines = [f"Here are 3 alternatives for {block_venue_name}, best first:", ""]
+    for idx, alt in enumerate(alternatives, start=1):
+        venue = alt.get("venue_name", "?")
+        rationale = alt.get("rationale", "")
+        dur = alt.get("duration_minutes", 0)
+        cost = alt.get("est_cost", 0)
+        currency = alt.get("currency", "")
+        source_urls = alt.get("source_urls") or []
+        source = source_urls[0] if source_urls else "(no source)"
+        lines.append(f"{idx}. {venue}")
+        if rationale:
+            lines.append(f"   {rationale}")
+        lines.append(f"   ~{dur} min · {cost} {currency}")
+        lines.append(f"   Source: {source}")
+        lines.append("")
+    lines.append("Which one do you want? Once you pick, I'll swap it into your trip.")
+    return "\n".join(lines)
+
+
+def format_alternative_active_job(*, active_job_kind: str, active_job_id: str) -> str:
+    """find_alternative response for 409 + kind="active_job".
+
+    Surfaces the slice-3.3 KIND_LABELS label so the user knows what's
+    blocking. Falls through to a generic label if the backend ever ships
+    a JobKind we don't have here yet — honest degradation.
+    """
+    label = _KIND_LABELS.get(active_job_kind, "background")
+    return (
+        f"I can't look up alternatives right now — a {label} job is already "
+        f"in progress for this trip (job {active_job_id}). Ask me to check "
+        f"the trip status via get_trip; once it's done, I can find "
+        f"alternatives."
+    )
+
+
+def format_alternative_not_ready(state: str) -> str:
+    """find_alternative response for 409 + kind="not_ready".
+
+    Branches on state value identically in spirit to
+    format_regenerate_day_not_ready — names "failed"/"never planned" plainly.
+    """
+    if state == "never_planned":
+        return (
+            "I can't look up alternatives yet — this trip hasn't been "
+            "planned. Ask me to start planning, then I can find alternatives "
+            "for any block."
+        )
+    if state == "failed":
+        return (
+            "I can't look up alternatives on a trip whose initial planning "
+            "didn't complete. Try create_trip again from scratch, or "
+            "refine_trip if you want to adjust the inputs."
+        )
+    return (
+        f"This trip is in a state I can't find alternatives from — likely "
+        f"cancelled (state={state}). Use create_trip to start fresh."
+    )
+
+
+def format_alternative_block_not_found(*, trip_id: uuid.UUID, block_id: uuid.UUID) -> str:
+    """find_alternative response when the backend returns 404 for the block.
+
+    Distinct from format_trip_not_found: the trip exists; only the block
+    doesn't. Routes the LLM to get_trip to see current blocks before
+    retrying with a real block_id.
+    """
+    return (
+        f"I couldn't find block {block_id} in trip {trip_id} — the block_id "
+        f"may be wrong or the block may have been removed. Call get_trip to "
+        f"see the current blocks, then try again with a real block_id."
+    )
+
+
+def format_alternative_timeout(*, elapsed_seconds: float) -> str:
+    """find_alternative response for 504 + kind="timeout".
+
+    Names "timed out" plainly — no softer language. Puts the retry choice
+    on the user (not automatic). Per the §4.7 description, the LLM is
+    told NOT to retry automatically; this formatter surfaces the timeout
+    honestly and asks.
+    """
+    return (
+        f"The alternative search timed out after {elapsed_seconds:.0f} "
+        f"seconds. The research crew didn't finish in time.\n"
+        f"\n"
+        f"Want me to try again? (Each retry can take up to 90 seconds.)"
+    )
+
+
+def format_alternative_failed(*, trip_id: uuid.UUID, reason: str) -> str:
+    """find_alternative catch-all for unexpected non-2xx (e.g., 500 from
+    an unhandled crew exception). Mirrors format_refine_failed cadence.
+    """
+    return (
+        f"I couldn't look up alternatives for trip {trip_id} — {reason}.\n\nWant me to try again?"
+    )
