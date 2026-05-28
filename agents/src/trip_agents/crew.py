@@ -34,11 +34,13 @@ from trip_agents.llm import get_langfuse
 from trip_agents.local_expert import local_expert
 from trip_agents.logistics import logistics_planner
 from trip_agents.researcher import researcher
-from trip_agents.schemas import AuditedPlan, TripPlan
+from trip_agents.schemas import AuditedPlan, Day, TripPlan
 from trip_agents.tasks import (
     make_audit_task,
     make_local_expertise_task,
     make_planning_task,
+    make_refine_task,
+    make_regenerate_day_task,
     make_research_task,
 )
 
@@ -238,26 +240,128 @@ def run_stub(destination: str) -> list[dict[str, Any]]:
     return data
 
 
-# Slice 3.3 commit 3 stubs. The actual hierarchical crew composition and
-# the day-scoped regen logic land in commit 4. These exist now so the
-# backend worker module can import them and ship as standalone CI-green.
-# Tests for refine/regen paths mock these (see backend/tests/test_worker.py).
+# Slice 3.3 commit 4: hierarchical refine + sequential single-day regenerate.
 
 
-def refine(trip_id: str, refinement_description: str, **kwargs: Any) -> dict[str, Any]:
-    """Hierarchical refine entry point. Slice 3.3 commit 4 implements; this
-    stub exists so commit 3 (the worker wrapper) can import cleanly.
+def _build_refine_crew(step_callback: Callable[[Any], None] | None = None) -> Crew:
+    """Hierarchical 4-agent crew for refine_trip. manager_llm is REQUIRED by
+    CrewAI for Process.hierarchical — we reuse build_llm() so the manager
+    runs on the same Claude Sonnet 4 as the workers. Returns None in test
+    contexts where ANTHROPIC_API_KEY is absent; tests mock the Crew
+    constructor anyway so the None is invisible there.
     """
-    _ = (trip_id, refinement_description, kwargs)
-    raise NotImplementedError("crew.refine — implementation lands in slice 3.3 commit 4")
+    from trip_agents.budget_auditor import budget_auditor  # noqa: PLC0415
+    from trip_agents.llm import build_llm  # noqa: PLC0415
+
+    refine_task = make_refine_task()
+    kwargs: dict[str, Any] = {
+        "agents": [researcher, local_expert, logistics_planner, budget_auditor],
+        "tasks": [refine_task],
+        "process": Process.hierarchical,
+        "manager_llm": build_llm(),
+        "verbose": False,
+    }
+    if step_callback is not None:
+        kwargs["step_callback"] = step_callback
+    return Crew(**kwargs)
 
 
-def regenerate_day(
-    trip_id: str, day_number: int, hint: str | None = None, **kwargs: Any
+@observe(name="crew.refine")
+def refine(
+    trip_state: dict[str, Any],
+    refinement_description: str,
+    step_callback: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
-    """Day-scoped regen entry point. Slice 3.3 commit 4 implements."""
-    _ = (trip_id, day_number, hint, kwargs)
-    raise NotImplementedError("crew.regenerate_day — implementation lands in slice 3.3 commit 4")
+    """Hierarchical refine. Returns AuditedPlan.model_dump() — same shape as
+    plan_trip's output so the worker calls persist_audited_plan unchanged.
+    """
+    inputs: dict[str, Any] = {
+        "trip_state_json": json.dumps(trip_state),
+        "refinement_description": refinement_description,
+    }
+    logger.info("crew.refine.start", extra={"destination": trip_state.get("destination")})
+    crew_result = _build_refine_crew(step_callback=step_callback).kickoff(inputs=inputs)
+    audited = _extract_audited_plan(crew_result)
+    output: dict[str, Any] = audited.model_dump()
+    logger.info(
+        "crew.refine.success",
+        extra={"approved": output.get("approved"), "days": len(output.get("days") or [])},
+    )
+    return output
+
+
+def _build_regenerate_day_crew(
+    step_callback: Callable[[Any], None] | None = None,
+) -> Crew:
+    """Sequential 3-agent crew (Researcher → Local Expert → Logistics).
+    Budget Auditor intentionally not included for single-day regen.
+    """
+    regen_task = make_regenerate_day_task()
+    kwargs: dict[str, Any] = {
+        "agents": [researcher, local_expert, logistics_planner],
+        "tasks": [regen_task],
+        "process": Process.sequential,
+        "verbose": False,
+    }
+    if step_callback is not None:
+        kwargs["step_callback"] = step_callback
+    return Crew(**kwargs)
+
+
+@observe(name="crew.regenerate_day")
+def regenerate_day(
+    trip_context: dict[str, Any],
+    target_day: dict[str, Any],
+    locked_blocks: list[dict[str, Any]],
+    unlocked_positions: list[int],
+    hint: str | None = None,
+    step_callback: Callable[[Any], None] | None = None,
+) -> dict[str, Any]:
+    """Single-day regenerate. Returns a Day.model_dump() with blocks ONLY
+    for the unlocked positions — worker splices locked blocks back in.
+    """
+    inputs: dict[str, Any] = {
+        "trip_context_json": json.dumps(trip_context),
+        "target_day_json": json.dumps(target_day),
+        "locked_blocks_json": json.dumps(locked_blocks),
+        "unlocked_positions": ", ".join(str(p) for p in unlocked_positions),
+        "hint": hint or "no specific hint",
+    }
+    logger.info("crew.regenerate_day.start", extra={"day_number": target_day.get("day_number")})
+    crew_result = _build_regenerate_day_crew(step_callback=step_callback).kickoff(inputs=inputs)
+    day = _extract_day(crew_result)
+    output: dict[str, Any] = day.model_dump()
+    logger.info(
+        "crew.regenerate_day.success",
+        extra={"day_number": output.get("day_number"), "blocks": len(output.get("blocks") or [])},
+    )
+    return output
+
+
+def _extract_audited_plan(crew_result: Any) -> AuditedPlan:
+    """Pull an AuditedPlan from a Crew kickoff result — prefer .pydantic,
+    fall back to JSON parsing.
+    """
+    pyd = getattr(crew_result, "pydantic", None)
+    if isinstance(pyd, AuditedPlan):
+        return pyd
+    raw = getattr(crew_result, "raw", None) or str(crew_result)
+    parsed = _parse_json(raw)
+    if isinstance(parsed, dict):
+        return AuditedPlan.model_validate(parsed)
+    raise ValueError(f"could not extract AuditedPlan from {str(crew_result)[:200]!r}")
+
+
+def _extract_day(crew_result: Any) -> Day:
+    """Pull a Day from a Crew kickoff result."""
+    pyd = getattr(crew_result, "pydantic", None)
+    if isinstance(pyd, Day):
+        return pyd
+    raw = getattr(crew_result, "raw", None) or str(crew_result)
+    parsed = _parse_json(raw)
+    if isinstance(parsed, dict):
+        return Day.model_validate(parsed)
+    raise ValueError(f"could not extract Day from {str(crew_result)[:200]!r}")
 
 
 def _extract_trip_plan(crew_result: Any) -> TripPlan:

@@ -229,43 +229,97 @@ def test_is_retryable_classifies_429_and_5xx() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Slice 3.3 commit 3: refine_trip and regenerate_day worker tasks. The crew
-# functions they wrap are stubbed in agents/crew.py until commit 4; these
-# tests mock them at the worker boundary, same pattern as plan_trip mocking
-# crew_module.run.
+# Slice 3.3 commit 4: refine_trip and regenerate_day workers wired to real
+# crew functions + persistence. Tests mock the crew at the worker boundary
+# (same pattern as plan_trip mocking crew_module.run), plus mock the
+# DB-loading and persistence helpers since this file uses _patch_db_writes
+# (session-level mock, not real DB).
 # ---------------------------------------------------------------------------
 
 
+def _fake_trip_with_blocks(
+    locked_orders: tuple[int, ...] = (), all_orders: tuple[int, ...] = (1, 2, 3)
+) -> MagicMock:
+    """Build a MagicMock Trip with one Day whose blocks have specified
+    `order` values and locked flags. Used by worker tests that need the
+    Trip ORM-object shape (not real DB rows)."""
+    blocks = []
+    for o in all_orders:
+        b = MagicMock()
+        b.order = o
+        b.locked = o in locked_orders
+        b.type = "venue"
+        b.venue_name = f"V{o}{'-LOCKED' if b.locked else ''}"
+        b.duration_minutes = 60
+        b.est_cost = None
+        b.currency = "INR"
+        b.lat = None
+        b.lng = None
+        b.start_time = None
+        b.notes = ""
+        b.sources = []
+        blocks.append(b)
+    day = MagicMock()
+    day.day_number = 1
+    day.date = None
+    day.summary = "Day 1"
+    day.blocks = blocks
+    trip = MagicMock()
+    trip.destination = "Goa, India"
+    trip.currency = "INR"
+    trip.budget_total = None
+    trip.group_size = 1
+    trip.pace = "balanced"
+    trip.days = [day]
+    return trip
+
+
 @pytest.mark.asyncio
-async def test_refine_trip_success_writes_kind_refine() -> None:
-    """refine_trip wraps the crew call, then writes JobRun(kind='refine')."""
+async def test_refine_trip_loads_state_passes_dict_persists_and_writes_kind_refine() -> None:
+    """Happy path: load trip → call crew.refine(trip_state, refinement) →
+    persist AuditedPlan → write JobRun(kind='refine'). Verify the dict
+    shape that reaches the crew so the crew test contract is preserved."""
     session_mock, session_iter = _patch_db_writes()
-    crew_mock = MagicMock(return_value={"approved": True})
+    fake_trip = _fake_trip_with_blocks()
+    audited = {"approved": True, "days": [], "revision_log": []}
+    crew_mock = MagicMock(return_value=audited)
 
     with (
         patch.object(worker.crew_module, "refine", crew_mock),
         patch("app.worker.get_session", side_effect=session_iter),
+        patch("app.worker.get_trip_full", return_value=fake_trip),
+        patch("app.worker.persist_audited_plan") as persist_mock,
     ):
-        result = await worker.refine_trip(_ctx(), str(uuid.uuid4()), "make Day 2 chiller")
+        result = await worker.refine_trip(_ctx(), str(uuid.uuid4()), "make it chiller")
 
-    assert crew_mock.called, "crew.refine wasn't called — patch target may be wrong"
+    assert crew_mock.called, "crew.refine not invoked — patch target may be wrong"
+    # The trip_state arg the crew receives must include destination + days.
+    call_kwargs = crew_mock.call_args.kwargs
+    assert "trip_state" in call_kwargs, "crew.refine must receive trip_state kwarg"
+    trip_state = call_kwargs["trip_state"]
+    assert trip_state["destination"] == "Goa, India"
+    assert isinstance(trip_state["days"], list) and len(trip_state["days"]) == 1
+    assert call_kwargs["refinement_description"] == "make it chiller"
+
+    assert persist_mock.called, "persist_audited_plan must run on success"
     added = [c.args[0] for c in session_mock.add.call_args_list]
     assert len(added) == 1
-    job_run = added[0]
-    assert job_run.kind == "refine"
-    assert job_run.status == "succeeded"
+    assert added[0].kind == "refine"
+    assert added[0].status == "succeeded"
     assert result["status"] == "succeeded"
 
 
 @pytest.mark.asyncio
 async def test_refine_trip_fatal_error_writes_failed_with_kind_refine() -> None:
-    """Crew raises → FatalJobError wrap + JobRun(status='failed', kind='refine')."""
+    """Crew raises → FatalJobError + JobRun(status='failed', kind='refine')."""
     session_mock, session_iter = _patch_db_writes()
+    fake_trip = _fake_trip_with_blocks()
     crew_mock = MagicMock(side_effect=ValueError("unparseable refine output"))
 
     with (
         patch.object(worker.crew_module, "refine", crew_mock),
         patch("app.worker.get_session", side_effect=session_iter),
+        patch("app.worker.get_trip_full", return_value=fake_trip),
         pytest.raises(FatalJobError, match="unparseable refine output"),
     ):
         await worker.refine_trip(_ctx(), str(uuid.uuid4()), "anything")
@@ -277,34 +331,70 @@ async def test_refine_trip_fatal_error_writes_failed_with_kind_refine() -> None:
 
 
 @pytest.mark.asyncio
-async def test_regenerate_day_success_writes_kind_regen() -> None:
-    """regenerate_day wraps the crew call, writes JobRun(kind='regen')."""
+async def test_regenerate_day_filters_locked_blocks_and_splices_result() -> None:
+    """The load-bearing locked-block test. Trip Day 1 has blocks at orders
+    1, 2, 3 with block 2 locked. The worker:
+    1. Pre-filters: only positions 1 and 3 are sent to the crew.
+    2. Crew returns blocks for those positions only (mocked).
+    3. Worker splices the locked block 2 back in.
+    4. persist_regenerated_day receives all 3 blocks in order.
+    """
     session_mock, session_iter = _patch_db_writes()
-    crew_mock = MagicMock(return_value={"approved": True})
+    fake_trip = _fake_trip_with_blocks(locked_orders=(2,), all_orders=(1, 2, 3))
+    # Crew returns Day dict with blocks for the unlocked positions only.
+    crew_mock = MagicMock(
+        return_value={
+            "day_number": 1,
+            "date": None,
+            "summary": "Day 1",
+            "blocks": [
+                {"order": 1, "type": "venue", "venue_name": "NEW-1", "duration_minutes": 60},
+                {"order": 3, "type": "venue", "venue_name": "NEW-3", "duration_minutes": 60},
+            ],
+        }
+    )
 
     with (
         patch.object(worker.crew_module, "regenerate_day", crew_mock),
         patch("app.worker.get_session", side_effect=session_iter),
+        patch("app.worker.get_trip_full", return_value=fake_trip),
+        patch("app.worker.persist_regenerated_day") as persist_mock,
     ):
-        result = await worker.regenerate_day(_ctx(), str(uuid.uuid4()), 2, "more food, less hiking")
+        await worker.regenerate_day(_ctx(), str(uuid.uuid4()), 1, "more food")
 
-    assert crew_mock.called
-    added = [c.args[0] for c in session_mock.add.call_args_list]
-    assert len(added) == 1
-    job_run = added[0]
-    assert job_run.kind == "regen"
-    assert job_run.status == "succeeded"
-    assert result["status"] == "succeeded"
+    # Crew received only the unlocked positions.
+    call_kwargs = crew_mock.call_args.kwargs
+    assert "unlocked_positions" in call_kwargs
+    assert sorted(call_kwargs["unlocked_positions"]) == [1, 3], (
+        "locked block at position 2 must not be in unlocked_positions"
+    )
+    assert "locked_blocks" in call_kwargs
+    locked = call_kwargs["locked_blocks"]
+    assert len(locked) == 1 and locked[0]["order"] == 2
+
+    # persist_regenerated_day got all 3 spliced blocks in order.
+    persist_call = persist_mock.call_args
+    spliced = persist_call.kwargs.get("blocks") or persist_call.args[-1]
+    assert [b["order"] for b in spliced] == [1, 2, 3], (
+        "spliced blocks must include the locked block at its original position"
+    )
+    # The block at order=2 is the LOCKED one.
+    block_at_2 = next(b for b in spliced if b["order"] == 2)
+    assert "LOCKED" in block_at_2["venue_name"], (
+        "spliced block at position 2 must be the original locked block, not a regenerated one"
+    )
 
 
 @pytest.mark.asyncio
 async def test_regenerate_day_fatal_error_writes_failed_with_kind_regen() -> None:
     session_mock, session_iter = _patch_db_writes()
+    fake_trip = _fake_trip_with_blocks()
     crew_mock = MagicMock(side_effect=ValueError("crew blew up"))
 
     with (
         patch.object(worker.crew_module, "regenerate_day", crew_mock),
         patch("app.worker.get_session", side_effect=session_iter),
+        patch("app.worker.get_trip_full", return_value=fake_trip),
         pytest.raises(FatalJobError, match="crew blew up"),
     ):
         await worker.regenerate_day(_ctx(), str(uuid.uuid4()), 1)

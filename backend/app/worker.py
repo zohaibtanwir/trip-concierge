@@ -51,7 +51,11 @@ from app.config import settings
 from app.db.session import get_session
 from app.models.job_run import JobRun
 from app.schemas.plan import ProgressUpdate
-from app.services.trip_service import persist_audited_plan
+from app.services.trip_service import (
+    get_trip_full,
+    persist_audited_plan,
+    persist_regenerated_day,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -354,28 +358,95 @@ async def _cleanup_redis_keys(redis: Any | None, trip_id: str, *, include_cancel
         await redis.delete(*keys)
 
 
+def _serialize_trip_for_crew(trip: Any) -> dict[str, Any]:
+    """Flatten a Trip ORM object into the JSON-serializable dict shape that
+    crew.refine and crew.regenerate_day expect. Includes the full days →
+    blocks tree with each block's locked flag — the crew uses locked to
+    decide what to preserve.
+    """
+    return {
+        "destination": trip.destination,
+        "currency": trip.currency,
+        "budget_total": float(trip.budget_total) if trip.budget_total is not None else None,
+        "group_size": trip.group_size,
+        "pace": trip.pace,
+        "days": [
+            {
+                "day_number": d.day_number,
+                "date": str(d.date) if d.date else None,
+                "summary": d.summary,
+                "blocks": [
+                    {
+                        "order": b.order,
+                        "type": b.type,
+                        "venue_name": b.venue_name,
+                        "duration_minutes": b.duration_minutes,
+                        "est_cost": float(b.est_cost) if b.est_cost is not None else None,
+                        "currency": b.currency,
+                        "locked": b.locked,
+                        "start_time": b.start_time,
+                        "notes": b.notes,
+                    }
+                    for b in d.blocks
+                ],
+            }
+            for d in trip.days
+        ],
+    }
+
+
+def _block_orm_to_dict(b: Any) -> dict[str, Any]:
+    """One-block ORM → dict helper used by the regenerate_day splice path."""
+    return {
+        "order": b.order,
+        "type": b.type,
+        "venue_name": b.venue_name,
+        "duration_minutes": b.duration_minutes,
+        "est_cost": float(b.est_cost) if b.est_cost is not None else None,
+        "currency": b.currency,
+        "start_time": b.start_time,
+        "notes": b.notes,
+        "source_urls": [s.url for s in getattr(b, "sources", [])],
+    }
+
+
 async def refine_trip(
     ctx: dict[str, Any],
     trip_id: str,
     refinement_description: str,
 ) -> dict[str, Any]:
-    """arq task: run the hierarchical refine crew for a trip.
+    """arq task: hierarchical refine.
 
-    Slice 3.3 commit 3 — thin wrapper that calls `crew_module.refine`.
-    The actual hierarchical crew composition + persistence semantics
-    land in commit 4. Tests mock `crew_module.refine` (same pattern as
-    plan_trip mocks `crew_module.run`).
+    Loads the trip + days + blocks + sources from DB, serializes to a dict,
+    calls crew_module.refine which returns an AuditedPlan dict, persists
+    destructively via persist_audited_plan (same path as plan_trip). Writes
+    JobRun(kind='refine').
     """
     job_id = ctx.get("job_id", "unknown")
     started_at = datetime.now(UTC)
     monotonic_start = time.monotonic()
     redis = ctx.get("redis")
+    loop = asyncio.get_running_loop()
+    events, cb = _make_step_callback(redis=redis, trip_id=trip_id, loop=loop)
+
+    # Load the trip state on the worker thread (sync SQLAlchemy).
+    db_iter = get_session()
+    db = next(db_iter)
+    try:
+        trip = get_trip_full(db, UUID(trip_id))
+        if trip is None:
+            raise FatalJobError(f"trip {trip_id} not found")
+        trip_state = _serialize_trip_for_crew(trip)
+    finally:
+        with contextlib.suppress(StopIteration):
+            next(db_iter)
 
     try:
-        await asyncio.to_thread(
+        output = await asyncio.to_thread(
             crew_module.refine,
-            trip_id=trip_id,
+            trip_state=trip_state,
             refinement_description=refinement_description,
+            step_callback=cb,
         )
     except asyncio.CancelledError:
         _write_job_run_session(
@@ -413,15 +484,24 @@ async def refine_trip(
         await _cleanup_redis_keys(redis, trip_id, include_cancelling=False)
         raise FatalJobError(str(exc)) from exc
 
-    # Success — commit 4 wires real persistence; for now record the row.
+    # Success — persist destructively (same path as plan_trip), then JobRun.
+    db_iter = get_session()
+    db = next(db_iter)
+    try:
+        persist_audited_plan(db, UUID(trip_id), output)
+    finally:
+        with contextlib.suppress(StopIteration):
+            next(db_iter)
+
+    approved = bool(output.get("approved")) if "approved" in output else None
     job_run = _write_job_run_session(
         job_id=str(job_id),
         trip_id=UUID(trip_id),
         kind="refine",
         status="succeeded",
-        approved=None,
+        approved=approved,
         error=None,
-        agent_summary=[],
+        agent_summary=events,
         started_at=started_at,
         monotonic_start=monotonic_start,
         total_cost=Decimal("0"),
@@ -437,22 +517,62 @@ async def regenerate_day(
     day_number: int,
     hint: str | None = None,
 ) -> dict[str, Any]:
-    """arq task: regenerate a single day's blocks.
+    """arq task: single-day regenerate with deterministic locked-block splice.
 
-    Slice 3.3 commit 3 — wraps `crew_module.regenerate_day`. Same
-    structure as refine_trip; commit 4 implements the underlying crew.
+    1. Load the trip and find the target day.
+    2. Partition the day's blocks into locked (preserved) and unlocked
+       (to be regenerated). Per slice 3.3 commit 4 Q3 option (a), locked
+       blocks NEVER reach the crew — the LLM can't accidentally drop or
+       modify them.
+    3. Call crew.regenerate_day with the unlocked positions list and the
+       locked-block context (read-only metadata for the LLM's planning).
+    4. Splice: take the crew's new blocks, merge with the locked ones,
+       sort by `order`.
+    5. Persist via persist_regenerated_day (surgical, other days untouched).
+    6. Write JobRun(kind='regen').
     """
     job_id = ctx.get("job_id", "unknown")
     started_at = datetime.now(UTC)
     monotonic_start = time.monotonic()
     redis = ctx.get("redis")
+    loop = asyncio.get_running_loop()
+    events, cb = _make_step_callback(redis=redis, trip_id=trip_id, loop=loop)
+
+    # Load + partition.
+    db_iter = get_session()
+    db = next(db_iter)
+    try:
+        trip = get_trip_full(db, UUID(trip_id))
+        if trip is None:
+            raise FatalJobError(f"trip {trip_id} not found")
+        target_day_orm = next((d for d in trip.days if d.day_number == day_number), None)
+        if target_day_orm is None:
+            raise FatalJobError(f"trip {trip_id} has no day {day_number}")
+        trip_context = {
+            "destination": trip.destination,
+            "currency": trip.currency,
+            "budget_total": float(trip.budget_total) if trip.budget_total is not None else None,
+        }
+        target_day_meta = {
+            "day_number": target_day_orm.day_number,
+            "date": str(target_day_orm.date) if target_day_orm.date else None,
+            "summary": target_day_orm.summary,
+        }
+        locked_block_dicts = [_block_orm_to_dict(b) for b in target_day_orm.blocks if b.locked]
+        unlocked_positions = [b.order for b in target_day_orm.blocks if not b.locked]
+    finally:
+        with contextlib.suppress(StopIteration):
+            next(db_iter)
 
     try:
-        await asyncio.to_thread(
+        crew_output = await asyncio.to_thread(
             crew_module.regenerate_day,
-            trip_id=trip_id,
-            day_number=day_number,
+            trip_context=trip_context,
+            target_day=target_day_meta,
+            locked_blocks=locked_block_dicts,
+            unlocked_positions=unlocked_positions,
             hint=hint,
+            step_callback=cb,
         )
     except asyncio.CancelledError:
         _write_job_run_session(
@@ -490,6 +610,25 @@ async def regenerate_day(
         await _cleanup_redis_keys(redis, trip_id, include_cancelling=False)
         raise FatalJobError(str(exc)) from exc
 
+    # Splice: take the crew's regenerated blocks (for unlocked positions)
+    # and merge with the locked block dicts. Sort by order so the persistence
+    # layer receives a single ordered list.
+    regen_blocks = list(crew_output.get("blocks") or [])
+    spliced = sorted(regen_blocks + locked_block_dicts, key=lambda b: int(b["order"]))
+
+    db_iter = get_session()
+    db = next(db_iter)
+    try:
+        persist_regenerated_day(
+            db,
+            trip_id=UUID(trip_id),
+            day_number=day_number,
+            blocks=spliced,
+        )
+    finally:
+        with contextlib.suppress(StopIteration):
+            next(db_iter)
+
     job_run = _write_job_run_session(
         job_id=str(job_id),
         trip_id=UUID(trip_id),
@@ -497,7 +636,7 @@ async def regenerate_day(
         status="succeeded",
         approved=None,
         error=None,
-        agent_summary=[],
+        agent_summary=events,
         started_at=started_at,
         monotonic_start=monotonic_start,
         total_cost=Decimal("0"),

@@ -134,7 +134,7 @@ budget_auditor = Agent(
 ```
 
 **Behavior notes:**
-- Budget Auditor runs last in sequential mode, or as the final check in hierarchical mode.
+- Budget Auditor runs last in sequential mode. In hierarchical mode (refine_task) it's one of the four agents the manager_llm can route to; the manager is responsible for invoking it as the final check before returning, and the refine_task's expected_output forces the result through `AuditedPlan` so audit fields can't be skipped.
 - **Surgeon, not referee.** The Auditor applies its own cuts (remove/swap blocks, compress days) instead of round-tripping back to Logistics. allow_delegation=False enforces this.
 - **Orchestrator owns the loop, not the LLM.** crew.py invokes the Auditor with a fresh single-pass task up to `MAX_AUDIT_PASSES` times. If a pass returns approved=true, the orchestrator returns immediately. Otherwise that pass's revised plan feeds the next pass. After the cap, whatever the last pass produced is the final return (approved or not). The Auditor itself sees ONE pass at a time and never tries to track them. The infeasibility return is the expected output for infeasible asks, not an error.
 - Output must include a per-day cost breakdown, a total, and a revision_log describing what THIS pass cut/swapped and why. The orchestrator concatenates per-pass logs with a "Pass N: " prefix.
@@ -280,18 +280,73 @@ audit_task = Task(
 ```python
 refine_task = Task(
     description=(
-        "The user has an existing trip and wants to modify it. Their instruction: "
-        "'{user_instruction}'. Current trip state: {trip_state}. "
-        "Decide which agents need to be involved, route the work, and produce "
-        "an updated trip. Preserve any blocks that are locked. Validate against "
-        "constraints. Return both the updated trip and a human-readable diff."
+        "The user has an existing trip and wants to modify it. Current trip "
+        "state (JSON): {trip_state_json}.\n\n"
+        "User instruction: '{refinement_description}'.\n\n"
+        "Decide which agents to route this through, apply the modification, "
+        "and produce an updated full itinerary. Preserve any blocks marked "
+        "locked=true. Validate the result against the trip's stated budget "
+        "and constraints — Budget Auditor must approve before returning."
     ),
     expected_output=(
-        "JSON with: updated_trip (full trip object), diff_summary (string), "
-        "agents_consulted (list)."
+        "JSON matching the AuditedPlan schema: approved (bool), days (array), "
+        "per_day_costs (numbers indexed by day), total_cost (number), "
+        "currency (string), constraints_violated (list, empty if approved=true), "
+        "explanation (string, non-empty only if approved=false), "
+        "revision_log (list of human-readable strings describing what changed)."
     ),
+    # No agent= because hierarchical mode routes via manager_llm.
+    output_pydantic=AuditedPlan,
 )
 ```
+
+**Why AuditedPlan and not a separate RefinedPlan + diff_summary shape:**
+
+Slice 3.3 commit 4 (2026-05-28) chose the AuditedPlan output for refine over a richer `updated_trip + diff_summary + agents_consulted` envelope. Reasons:
+
+- **Persistence symmetry.** `persist_audited_plan` consumes AuditedPlan unchanged — no new persistence function for refine. Halves the schema surface and means the same destructive-replace semantics apply to plan_trip and refine_trip alike.
+- **Audit must be the final gate, not optional polish.** Forcing the manager_llm through an AuditedPlan-shaped expected_output makes "Budget Auditor approves the result" structurally required. A `diff_summary` envelope made the audit feel optional in early drafts.
+- **diff_summary belongs at the surfacing layer, not the crew layer.** The MCP `get_trip` tool produces a conversational diff naturally when the user asks "what changed?" — the LLM compares before/after observations on the trip. The PWA in Phase 4 will want a structured server-side diff (tracked as `trip-concierge-dsj`).
+
+The fields dropped from the old expected_output (`updated_trip`, `diff_summary`, `agents_consulted`) all have equivalents reachable from other sources: `updated_trip` = the days array, `diff_summary` = conversational LLM-text in the MCP layer, `agents_consulted` = the Langfuse trace.
+
+### 3.6 regenerate_day_task
+
+```python
+regenerate_day_task = Task(
+    description=(
+        "Regenerate blocks for one specific day of an existing trip.\n\n"
+        "Trip context (destination, currency, etc.): {trip_context_json}.\n"
+        "Target day to regenerate: {target_day_json}.\n"
+        "Blocks at these positions are LOCKED and must not appear in your "
+        "output — the worker will splice them back in: {locked_blocks_json}.\n"
+        "Produce new blocks ONLY for these positions: {unlocked_positions}.\n\n"
+        "Optional user hint for the regen: {hint}.\n\n"
+        "Return a single Day object whose blocks list contains exactly the "
+        "blocks for the unlocked positions — same order field values as "
+        "the listed positions. Day-level fields (day_number, date, summary) "
+        "echo the input."
+    ),
+    expected_output=(
+        "JSON matching the Day schema: day_number (int), date (string|null), "
+        "summary (string), blocks (array — one Block per unlocked position, "
+        "each with order, type, venue_name, duration_minutes, currency, and "
+        "source_urls)."
+    ),
+    agent=logistics_planner,
+    output_pydantic=Day,
+)
+```
+
+**Why locked blocks are EXCLUDED from the crew's output, not just flagged as preserved:**
+
+Slice 3.3 commit 4 chose option (a) for locked-block handling: pre-filter in the worker, splice deterministically afterward. The crew never sees locked blocks in its output schema. Reasons:
+
+- **The LLM cannot accidentally drop or modify what it cannot generate.** A "preserve blocks marked locked=true in your output" instruction is a soft constraint the model can violate. Excluding locked positions from `unlocked_positions` and refusing to include them in the expected_output is a hard constraint enforced by the worker.
+- **Same principle as `MAX_AUDIT_PASSES` enforced in Python, not in a prompt.** The audit loop limit is a code invariant; locked-block preservation is now too.
+- **Deterministic splice is auditable.** The worker's splice path (`spliced = sorted(regen_blocks + locked_block_dicts, key=order)`) is one line of Python that can be unit-tested. A model-honor approach can't be tested deterministically.
+
+The crew DOES receive `locked_blocks` as read-only context so it can plan around them sensibly (e.g., don't propose a 4-hour meal block adjacent to a locked 4-hour activity), but those blocks never round-trip through the output.
 
 ---
 
