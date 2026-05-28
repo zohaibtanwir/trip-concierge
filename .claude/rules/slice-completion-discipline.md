@@ -19,6 +19,7 @@ After a PR is approved:
 3. **Wait for CI green** — every required check, not "most of them."
 4. **Merge the PR** — squash + delete branch. This is the step that gets skipped or postponed.
 5. `git checkout main && git pull` — verify the merge commit is local.
+5a. **If the slice added a migration:** run `make db.migrate` locally against the dev DB and verify `alembic_version` matches the new head. The CI test DB getting `upgrade head` automatically per test session does NOT mean the dev DB advanced — they're different databases. See "How this step entered the rule" below.
 6. `bd close <ticket-id>` — only now.
 7. `bd ready` — confirm the next slice surfaces clean and the dependency graph is honest.
 
@@ -43,6 +44,12 @@ You spot a ticket marked closed while its PR is still open:
 1. **Do not start downstream work** based on that ticket's existence in `main`.
 2. Either merge the PR (preferred — finish what was started) or `bd reopen <id>` (if the PR is going to be abandoned).
 3. Audit any tickets unblocked by the prematurely-closed one — they may have already been claimed and their authors may be referencing code that isn't on main yet.
+
+## How step 5a entered the rule
+
+Slice 3.2 validation (2026-05-28) surfaced a class of bug invisible to CI: the dev DB had drifted three migrations behind code (alembic_version=0002 while code expected 0005). Slices 2.4, 2.5b, and 2.5c had each added a migration; each was applied to the CI test DB via `conftest.py:db_engine` running `command.upgrade(cfg, "head")` per session; the dev DB was never re-migrated. Five MCP scenarios passed validation at the tool layer; meanwhile the worker silently crashed mid-job on every plan request and burned ~$0.80 of real LLM spend producing crew output that couldn't be persisted.
+
+Backend startup now refuses to come up on alembic mismatch (see `backend/app/db/startup_check.py`, added in the slice 3.2 postmortem). That catches the drift on next restart. But the catch is at restart-time, not commit-time. Step 5a moves the audit earlier — to the moment a migration first lands on main — so the fix happens before the next slice begins and before the next manual test burns money.
 
 ## Mechanical guard (future)
 
