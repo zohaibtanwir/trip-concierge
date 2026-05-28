@@ -22,9 +22,10 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.day import Day
 
 
 class Trip(Base):
@@ -69,4 +70,14 @@ class Trip(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+    # Top of the days→blocks→sources tree fetched by GET /trips/{id}/full
+    # via selectinload. order_by surfaces days in calendar order regardless
+    # of insert sequence.
+    days: Mapped[list[Day]] = relationship(
+        "Day",
+        order_by="Day.day_number",
+        cascade="all, delete-orphan",
+        lazy="select",
     )

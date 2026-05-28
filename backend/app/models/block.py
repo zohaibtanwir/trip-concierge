@@ -18,9 +18,10 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.source import Source
 
 
 class Block(Base):
@@ -57,4 +58,12 @@ class Block(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+
+    # Sources nested under each Block in GET /trips/{id}/full. No order_by —
+    # sources don't have an explicit ordering field; insertion order is fine.
+    sources: Mapped[list[Source]] = relationship(
+        "Source",
+        cascade="all, delete-orphan",
+        lazy="select",
     )

@@ -7,8 +7,8 @@ from datetime import date as date_type
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.block import Block
 from app.models.day import Day
@@ -33,6 +33,24 @@ def create_trip(db: Session, payload: TripCreate, *, user_id: uuid.UUID) -> Trip
 
 def get_trip(db: Session, trip_id: uuid.UUID) -> Trip | None:
     return db.get(Trip, trip_id)
+
+
+def get_trip_full(db: Session, trip_id: uuid.UUID) -> Trip | None:
+    """Fetch a Trip with its days→blocks→sources tree eager-loaded.
+
+    Three queries total via selectinload, regardless of how many days or
+    blocks the trip has — avoids the N+1 pattern a naive query would hit.
+    Day.blocks and Trip.days carry `order_by` on the relationship, so the
+    loaded collections are pre-sorted by the time they reach the route.
+
+    Returns None if the trip doesn't exist.
+    """
+    stmt = (
+        select(Trip)
+        .where(Trip.id == trip_id)
+        .options(selectinload(Trip.days).selectinload(Day.blocks).selectinload(Block.sources))
+    )
+    return db.execute(stmt).scalar_one_or_none()
 
 
 def persist_audited_plan(
