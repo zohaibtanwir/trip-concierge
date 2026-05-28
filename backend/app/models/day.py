@@ -7,9 +7,10 @@ from datetime import date, datetime
 
 from sqlalchemy import Date, DateTime, ForeignKey, Integer, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.block import Block
 
 
 class Day(Base):
@@ -34,4 +35,15 @@ class Day(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+
+    # Relationship for selectinload-based tree fetch in GET /trips/{id}/full.
+    # order_by on the relationship means consumers (service.get_trip_full,
+    # Pydantic schema serialization) get pre-sorted Blocks without needing
+    # to re-sort.
+    blocks: Mapped[list[Block]] = relationship(
+        "Block",
+        order_by="Block.order",
+        cascade="all, delete-orphan",
+        lazy="select",
     )

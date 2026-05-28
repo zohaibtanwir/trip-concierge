@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.db.startup_check import verify_alembic_at_head
-from app.routes import auth, plan, trips
+from app.routes import auth, plan, refine, regenerate, trips
 
 
 @asynccontextmanager
@@ -19,6 +19,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 app = FastAPI(lifespan=lifespan)
 app.include_router(trips.router)
 app.include_router(plan.router)
+app.include_router(refine.router)
+app.include_router(regenerate.router)
 app.include_router(auth.router)
 
 

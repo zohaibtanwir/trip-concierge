@@ -48,6 +48,12 @@ class JobRun(Base):
         index=True,
     )
 
+    # What kind of job produced this row. Added slice 3.3 (migration 0006).
+    # Values: 'plan' (create_trip's enqueued job), 'refine' (refine_trip
+    # hierarchical), 'regen' (regenerate_day). server_default='plan' keeps
+    # pre-3.3 call sites correct without code changes.
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, server_default="plan")
+
     # Final state only. Hot state (queued/running) lives in Redis.
     # Worker writes this row on terminal events: succeeded | failed | cancelled.
     status: Mapped[str] = mapped_column(String(20), nullable=False)

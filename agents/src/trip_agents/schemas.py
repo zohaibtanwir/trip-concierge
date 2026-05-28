@@ -192,3 +192,60 @@ class CreateTripInput(BaseModel):
         if not self.destination and not self.vibe:
             raise ValueError("at least one of `destination` or `vibe` must be provided")
         return self
+
+
+class GetTripInput(BaseModel):
+    """Input for the get_trip MCP tool — single field, trip_id only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(
+        description=(
+            "The trip's UUID. Returned by create_trip and mentioned earlier in "
+            "the conversation. Required."
+        ),
+    )
+
+
+class RefineTripInput(BaseModel):
+    """Input for the refine_trip MCP tool — modifications to an existing trip."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(description="The trip's UUID to refine.")
+    refinement_description: str = Field(
+        min_length=10,
+        max_length=2000,
+        description=(
+            "Free-text instruction for what to change. Examples: 'make Day 2 "
+            "chiller', 'we're vegetarian, swap food picks', 'I want to spend "
+            "less on Day 3', 'redo the whole trip with a less packed pace'. "
+            "Extract the user's intent verbatim if possible — don't paraphrase."
+        ),
+    )
+
+
+class RegenerateDayInput(BaseModel):
+    """Input for the regenerate_day MCP tool — replan one specific day."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(description="The trip's UUID.")
+    day_number: int = Field(
+        ge=1,
+        le=30,
+        description=(
+            "Which day of the trip to regenerate (1-indexed). Extract from "
+            "phrases like 'redo Day 2', 'change the third day', 'Day 5 isn't "
+            "working'."
+        ),
+    )
+    hint: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Optional free-text guidance for the regeneration — e.g., 'more "
+            "food, less hiking', 'cheaper venues', 'rainy-day options'. "
+            "Leave unset if the user didn't give a specific hint."
+        ),
+    )

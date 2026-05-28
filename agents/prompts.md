@@ -134,7 +134,7 @@ budget_auditor = Agent(
 ```
 
 **Behavior notes:**
-- Budget Auditor runs last in sequential mode, or as the final check in hierarchical mode.
+- Budget Auditor runs last in sequential mode. In hierarchical mode (refine_task) it's one of the four agents the manager_llm can route to; the manager is responsible for invoking it as the final check before returning, and the refine_task's expected_output forces the result through `AuditedPlan` so audit fields can't be skipped.
 - **Surgeon, not referee.** The Auditor applies its own cuts (remove/swap blocks, compress days) instead of round-tripping back to Logistics. allow_delegation=False enforces this.
 - **Orchestrator owns the loop, not the LLM.** crew.py invokes the Auditor with a fresh single-pass task up to `MAX_AUDIT_PASSES` times. If a pass returns approved=true, the orchestrator returns immediately. Otherwise that pass's revised plan feeds the next pass. After the cap, whatever the last pass produced is the final return (approved or not). The Auditor itself sees ONE pass at a time and never tries to track them. The infeasibility return is the expected output for infeasible asks, not an error.
 - Output must include a per-day cost breakdown, a total, and a revision_log describing what THIS pass cut/swapped and why. The orchestrator concatenates per-pass logs with a "Pass N: " prefix.
@@ -280,18 +280,73 @@ audit_task = Task(
 ```python
 refine_task = Task(
     description=(
-        "The user has an existing trip and wants to modify it. Their instruction: "
-        "'{user_instruction}'. Current trip state: {trip_state}. "
-        "Decide which agents need to be involved, route the work, and produce "
-        "an updated trip. Preserve any blocks that are locked. Validate against "
-        "constraints. Return both the updated trip and a human-readable diff."
+        "The user has an existing trip and wants to modify it. Current trip "
+        "state (JSON): {trip_state_json}.\n\n"
+        "User instruction: '{refinement_description}'.\n\n"
+        "Decide which agents to route this through, apply the modification, "
+        "and produce an updated full itinerary. Preserve any blocks marked "
+        "locked=true. Validate the result against the trip's stated budget "
+        "and constraints — Budget Auditor must approve before returning."
     ),
     expected_output=(
-        "JSON with: updated_trip (full trip object), diff_summary (string), "
-        "agents_consulted (list)."
+        "JSON matching the AuditedPlan schema: approved (bool), days (array), "
+        "per_day_costs (numbers indexed by day), total_cost (number), "
+        "currency (string), constraints_violated (list, empty if approved=true), "
+        "explanation (string, non-empty only if approved=false), "
+        "revision_log (list of human-readable strings describing what changed)."
     ),
+    # No agent= because hierarchical mode routes via manager_llm.
+    output_pydantic=AuditedPlan,
 )
 ```
+
+**Why AuditedPlan and not a separate RefinedPlan + diff_summary shape:**
+
+Slice 3.3 commit 4 (2026-05-28) chose the AuditedPlan output for refine over a richer `updated_trip + diff_summary + agents_consulted` envelope. Reasons:
+
+- **Persistence symmetry.** `persist_audited_plan` consumes AuditedPlan unchanged — no new persistence function for refine. Halves the schema surface and means the same destructive-replace semantics apply to plan_trip and refine_trip alike.
+- **Audit must be the final gate, not optional polish.** Forcing the manager_llm through an AuditedPlan-shaped expected_output makes "Budget Auditor approves the result" structurally required. A `diff_summary` envelope made the audit feel optional in early drafts.
+- **diff_summary belongs at the surfacing layer, not the crew layer.** The MCP `get_trip` tool produces a conversational diff naturally when the user asks "what changed?" — the LLM compares before/after observations on the trip. The PWA in Phase 4 will want a structured server-side diff (tracked as `trip-concierge-dsj`).
+
+The fields dropped from the old expected_output (`updated_trip`, `diff_summary`, `agents_consulted`) all have equivalents reachable from other sources: `updated_trip` = the days array, `diff_summary` = conversational LLM-text in the MCP layer, `agents_consulted` = the Langfuse trace.
+
+### 3.6 regenerate_day_task
+
+```python
+regenerate_day_task = Task(
+    description=(
+        "Regenerate blocks for one specific day of an existing trip.\n\n"
+        "Trip context (destination, currency, etc.): {trip_context_json}.\n"
+        "Target day to regenerate: {target_day_json}.\n"
+        "Blocks at these positions are LOCKED and must not appear in your "
+        "output — the worker will splice them back in: {locked_blocks_json}.\n"
+        "Produce new blocks ONLY for these positions: {unlocked_positions}.\n\n"
+        "Optional user hint for the regen: {hint}.\n\n"
+        "Return a single Day object whose blocks list contains exactly the "
+        "blocks for the unlocked positions — same order field values as "
+        "the listed positions. Day-level fields (day_number, date, summary) "
+        "echo the input."
+    ),
+    expected_output=(
+        "JSON matching the Day schema: day_number (int), date (string|null), "
+        "summary (string), blocks (array — one Block per unlocked position, "
+        "each with order, type, venue_name, duration_minutes, currency, and "
+        "source_urls)."
+    ),
+    agent=logistics_planner,
+    output_pydantic=Day,
+)
+```
+
+**Why locked blocks are EXCLUDED from the crew's output, not just flagged as preserved:**
+
+Slice 3.3 commit 4 chose option (a) for locked-block handling: pre-filter in the worker, splice deterministically afterward. The crew never sees locked blocks in its output schema. Reasons:
+
+- **The LLM cannot accidentally drop or modify what it cannot generate.** A "preserve blocks marked locked=true in your output" instruction is a soft constraint the model can violate. Excluding locked positions from `unlocked_positions` and refusing to include them in the expected_output is a hard constraint enforced by the worker.
+- **Same principle as `MAX_AUDIT_PASSES` enforced in Python, not in a prompt.** The audit loop limit is a code invariant; locked-block preservation is now too.
+- **Deterministic splice is auditable.** The worker's splice path (`spliced = sorted(regen_blocks + locked_block_dicts, key=order)`) is one line of Python that can be unit-tested. A model-honor approach can't be tested deterministically.
+
+The crew DOES receive `locked_blocks` as read-only context so it can plan around them sensibly (e.g., don't propose a 4-hour meal block adjacent to a locked 4-hour activity), but those blocks never round-trip through the output.
 
 ---
 
@@ -336,16 +391,52 @@ Timing and what to say to the user:
 
 ```python
 description = """
-Use this tool to retrieve the current state of a trip the user has already created.
-You will need a trip_id, which is returned by create_trip and persists across
+**This is the trip retrieval tool. When a user asks about their trip's
+status, contents, or what got planned — use this tool.** Do not summarize
+from your conversation memory, do not use web_search to look up venues, do
+not invent details. This tool returns the authoritative state of the trip
+from the database. Built-in alternatives produce stale or fabricated data.
+
+Required: trip_id (UUID). Returned by create_trip and persists across
 sessions.
 
-Call this when the user references "my trip", "the Goa trip", "what did we plan",
-or similar — and you have a trip_id available in the conversation context or
-recent history.
+Call this when the user references "my trip", "the Goa trip", "what did we
+plan", "is my trip ready", or any question about an existing trip. If a
+trip_id has been mentioned earlier in the conversation, use it; if multiple
+trip_ids are in play, ask which one.
 
-Returns the full trip object including days, blocks, sources, and agent activity.
-The response is suitable for natural-language summarization back to the user.
+DO NOT call this tool if the user is asking about a hypothetical trip they
+haven't created yet — use create_trip instead.
+
+DO NOT call this tool for general travel questions ("what's the best time to
+visit Japan?") — answer those conversationally without invoking the planner.
+
+**Honest reporting of trip state — this tool's most important behavior:**
+
+- The response carries a `state` field with one of: planning, ready, failed.
+- When state is "planning": the trip is being generated. Tell the user it's
+  in progress; offer to check again in a few minutes. Include the
+  progress_message if available.
+- When state is "ready": the days array contains the full itinerary.
+  Summarize day-by-day from THAT data; do not embellish.
+- When state is "failed": the trip's planning did not complete successfully.
+  Report this honestly with the response's error message. Suggest next
+  steps (try create_trip again, or refine_trip if there's partial output
+  worth keeping).
+
+DO NOT claim the trip is "ready," "done," or "available" when state is
+"failed" or "cancelled" — the days/blocks shown may be empty or stale.
+
+DO NOT fabricate venues, times, or costs to fill gaps in the response. If a
+Day has zero Blocks, say so plainly — that's the signal the user needs to
+understand what went wrong.
+
+DO NOT translate "failed" into softer language ("not quite finished",
+"still working on it", "almost there"). The state is final; if planning
+failed, the user needs to know so they can act.
+
+The tool returns in under 1 second. There is no background work — what you
+see IS the authoritative current state.
 """
 ```
 
@@ -353,23 +444,41 @@ The response is suitable for natural-language summarization back to the user.
 
 ```python
 description = """
-Use this tool to modify an existing trip based on a natural-language instruction
-from the user. Examples of instructions that should trigger this tool:
+**This is the trip modification tool. When a user wants to change something
+about an existing trip — use this tool.** Do not use create_trip (that
+starts a new trip from scratch). Do not modify the trip conversationally
+from memory; this tool persists the change to the database via a
+multi-agent refinement process that respects budget and constraints.
+
+Required: trip_id and refinement_description (free-text user instruction).
+
+Call this for instructions like:
 - "make Day 2 chiller"
 - "swap that museum for something outdoor"
 - "we're vegetarian, redo the food picks"
 - "I want to spend less on Day 3"
+- "redo the whole trip with a more relaxed pace"
 
-This routes through a hierarchical agent process which figures out which specialist
-agents to involve. Locked blocks are preserved automatically.
+DO NOT call this tool if the user wants a different destination — that's a
+new trip. Use create_trip instead. (Refining to "redo from scratch but same
+destination" is fine.)
 
-DO NOT call this for very narrow edits like "regenerate just this one restaurant" —
-use find_alternative or regenerate_day instead, which are cheaper and faster.
+DO NOT call this tool for very narrow edits like "regenerate just Day 2" —
+use regenerate_day instead, which is faster and cheaper.
 
-DO NOT call this for adding new constraints — use add_constraint, which is the
-right semantic verb and handles the revision retries correctly.
+DO NOT call this tool for general travel questions — answer conversationally
+or use web_search.
 
-Generation takes 15-25 seconds.
+Timing and what to say to the user:
+- The tool call returns in under 1 second with a job_id.
+- The refinement runs in the background and takes about 10 minutes. Locked
+  blocks are preserved automatically; the rest of the plan is updated under
+  the trip's existing constraints.
+- Tell the user the refinement was started and offer to check back via
+  get_trip.
+- DO NOT claim the refinement is "applied," "done," or "ready" until
+  get_trip confirms state=ready. The previous itinerary may still be visible
+  during planning.
 """
 ```
 
@@ -377,15 +486,45 @@ Generation takes 15-25 seconds.
 
 ```python
 description = """
-Use this tool when the user wants to replan a specific day of their trip.
-Examples: "redo Day 2", "change the second day completely", "Day 3 isn't working".
+**This is the single-day replan tool. When a user wants to redo one
+specific day of an existing trip — use this tool.** Do not use refine_trip
+(that re-plans the whole trip and costs more LLM time). Do not edit the day
+conversationally; this tool persists a new set of blocks for the target day
+while preserving any blocks the user has locked.
 
-Locked blocks within that day are preserved. Other blocks are regenerated under
-the same trip-level constraints unless the user provides a new constraint, which
-should be passed in the optional `new_constraint` field.
+Required: trip_id and day_number (1-indexed).
+Recommended: hint (free-text — what kind of change the user wants).
 
-Faster than refine_trip (10-15 seconds). Use this when the scope is exactly one
-day; use refine_trip when the change cuts across days.
+Call this for instructions like:
+- "redo Day 2"
+- "change the second day completely"
+- "Day 3 isn't working, give me something different"
+- "regenerate Day 4 with more food and less hiking"
+
+DO NOT call this tool if the user wants changes spanning multiple days —
+use refine_trip instead.
+
+DO NOT call this tool if the user wants to swap just one venue — that's
+narrower than a day regeneration. Ask the user if they meant one specific
+block or the whole day.
+
+DO NOT call this tool for general travel questions — answer conversationally
+or use web_search.
+
+DO NOT call this tool if the trip's state is "planning" or "failed" — call
+get_trip first to see what state it's in. The tool will refuse with a
+clarification message if you call it on a trip that's not "ready" yet.
+
+Timing and what to say to the user:
+- The tool call returns in under 1 second with a job_id.
+- The day regeneration runs in the background and takes about 3-5 minutes
+  (faster than refine_trip because the scope is one day, not the whole trip).
+- Locked blocks at specific positions are preserved automatically — the
+  user does not need to mention them.
+- Tell the user the day regeneration was started and offer to check back
+  via get_trip.
+- DO NOT claim the new day is "ready," "done," or "applied" until get_trip
+  confirms state=ready.
 """
 ```
 

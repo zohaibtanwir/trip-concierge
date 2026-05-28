@@ -170,6 +170,50 @@ def test_status_returns_queued_when_arq_job_queued(client: TestClient, db_sessio
     assert body["error"] is None
 
 
+def test_status_surfaces_kind_from_json_active_job(client: TestClient, db_session: Session) -> None:
+    """Slice 3.3 commit 3: PlanStatus gains an optional `kind` field. When
+    the active_job key holds a JSON entry, `kind` surfaces in the response
+    so the MCP get_trip tool can render "your refine is running" vs "your
+    trip is being planned" without an extra HTTP call.
+    """
+    trip = _make_trip(db_session)
+    active_payload = json.dumps({"job_id": "refine-1", "kind": "refine"}).encode()
+    pool = _pool_with(active_job=active_payload)
+
+    with (
+        patch("app.routes.plan.create_pool", return_value=pool),
+        patch("app.routes.plan.Job", _mock_job(JobStatus.in_progress)),
+    ):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["state"] == "running"
+    assert body["job_id"] == "refine-1"
+    assert body["kind"] == "refine"
+
+
+def test_status_kind_defaults_to_plan_for_legacy_plain_string(
+    client: TestClient, db_session: Session
+) -> None:
+    """Legacy plain-string entries in the active_job key collapse to
+    kind='plan' — the same graceful-degradation rule as the route's
+    legacy-tolerance helper.
+    """
+    trip = _make_trip(db_session)
+    pool = _pool_with(active_job=b"job-legacy-1")
+
+    with (
+        patch("app.routes.plan.create_pool", return_value=pool),
+        patch("app.routes.plan.Job", _mock_job(JobStatus.in_progress)),
+    ):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    body = response.json()
+    assert body["job_id"] == "job-legacy-1"
+    assert body["kind"] == "plan"
+
+
 def test_status_returns_running_with_progress(client: TestClient, db_session: Session) -> None:
     trip = _make_trip(db_session)
     progress_payload = json.dumps(

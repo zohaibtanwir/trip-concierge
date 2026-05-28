@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import require_mcp_token
 from app.db.session import get_session
 from app.models.user import User
-from app.schemas.trip import TripCreate, TripRead
+from app.schemas.trip import TripCreate, TripFullRead, TripRead
 from app.services import trip_service
 
 router = APIRouter(prefix="/trips", tags=["trips"])
@@ -42,3 +42,27 @@ def get_trip(trip_id: uuid.UUID, db: SessionDep) -> TripRead:
     if trip is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="trip not found")
     return TripRead.model_validate(trip)
+
+
+@router.get("/{trip_id}/full", response_model=TripFullRead)
+def get_trip_full(
+    trip_id: uuid.UUID,
+    _user: AuthedUser,
+    db: SessionDep,
+) -> TripFullRead:
+    """Trip envelope plus the full days→blocks→sources tree.
+
+    Slice 3.3's MCP get_trip tool composes this with /plan/status to render
+    the user-facing observability surface (PLANNING / SUCCEEDED / FAILED
+    state). plan_status is intentionally NOT returned here — this endpoint
+    stays a pure read with no Redis dependency.
+
+    Auth-protected because the response leaks the entire itinerary; the
+    `_user` arg is unused inside the handler today (no ownership check
+    until Phase 4), but the dependency declaration is what enforces the
+    gate.
+    """
+    trip = trip_service.get_trip_full(db, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="trip not found")
+    return TripFullRead.model_validate(trip)

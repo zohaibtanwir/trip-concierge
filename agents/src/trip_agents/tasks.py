@@ -13,7 +13,7 @@ from trip_agents.budget_auditor import budget_auditor
 from trip_agents.local_expert import local_expert
 from trip_agents.logistics import logistics_planner
 from trip_agents.researcher import researcher
-from trip_agents.schemas import AuditedPlan, TripPlan
+from trip_agents.schemas import AuditedPlan, Day, TripPlan
 
 
 def make_research_task() -> Task:
@@ -117,4 +117,61 @@ def make_audit_task() -> Task:
             "cut/swapped/compressed and why)."
         ),
         output_pydantic=AuditedPlan,
+    )
+
+
+def make_refine_task() -> Task:
+    """Hierarchical refine task — slice 3.3. Description + expected_output
+    are the canonical strings from agents/prompts.md §3.5 (rewritten in
+    commit 4 to drop diff_summary in favor of AuditedPlan shape).
+    """
+    return Task(
+        description=(
+            "The user has an existing trip and wants to modify it. Current trip "
+            "state (JSON): {trip_state_json}.\n\n"
+            "User instruction: '{refinement_description}'.\n\n"
+            "Decide which agents to route this through, apply the modification, "
+            "and produce an updated full itinerary. Preserve any blocks marked "
+            "locked=true. Validate the result against the trip's stated budget "
+            "and constraints — Budget Auditor must approve before returning."
+        ),
+        expected_output=(
+            "JSON matching the AuditedPlan schema: approved (bool), days (array), "
+            "per_day_costs (numbers indexed by day), total_cost (number), "
+            "currency (string), constraints_violated (list, empty if approved=true), "
+            "explanation (string, non-empty only if approved=false), "
+            "revision_log (list of human-readable strings describing what changed)."
+        ),
+        # No agent= because hierarchical mode routes via manager_llm.
+        output_pydantic=AuditedPlan,
+    )
+
+
+def make_regenerate_day_task() -> Task:
+    """Sequential single-day regenerate task — slice 3.3. Description and
+    expected_output are the canonical strings from agents/prompts.md §3.X
+    (new section added in commit 4).
+    """
+    return Task(
+        description=(
+            "Regenerate blocks for one specific day of an existing trip.\n\n"
+            "Trip context (destination, currency, etc.): {trip_context_json}.\n"
+            "Target day to regenerate: {target_day_json}.\n"
+            "Blocks at these positions are LOCKED and must not appear in your "
+            "output — the worker will splice them back in: {locked_blocks_json}.\n"
+            "Produce new blocks ONLY for these positions: {unlocked_positions}.\n\n"
+            "Optional user hint for the regen: {hint}.\n\n"
+            "Return a single Day object whose blocks list contains exactly the "
+            "blocks for the unlocked positions — same order field values as "
+            "the listed positions. Day-level fields (day_number, date, summary) "
+            "echo the input."
+        ),
+        expected_output=(
+            "JSON matching the Day schema: day_number (int), date (string|null), "
+            "summary (string), blocks (array — one Block per unlocked position, "
+            "each with order, type, venue_name, duration_minutes, currency, and "
+            "source_urls)."
+        ),
+        agent=logistics_planner,
+        output_pydantic=Day,
     )

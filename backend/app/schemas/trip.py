@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.day import DayRead
+
 
 class TripCreate(BaseModel):
     """POST /trips body. `user_id` is derived from the JWT subject by
@@ -52,3 +54,15 @@ class TripRead(BaseModel):
     pace: str
     created_at: datetime
     updated_at: datetime
+
+
+class TripFullRead(TripRead):
+    """GET /trips/{id}/full — TripRead plus the days→blocks→sources tree.
+
+    Used by the MCP get_trip tool (slice 3.3). plan_status is intentionally
+    NOT included here; the MCP tool composes /full with /plan/status itself
+    (two HTTP calls, matching the create_trip pattern from 3.2). Keeps this
+    endpoint a pure read with no Redis dependency.
+    """
+
+    days: list[DayRead] = []
