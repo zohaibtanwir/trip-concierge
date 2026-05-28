@@ -187,13 +187,27 @@ The original Slice 2.5 spec ("p95 ≤ 30s for a small trip") was unrealistic —
 - **Files to create:** one file per tool under `mcp_server/tools/`
 - **Tests:** unit + manual.
 
-### Slice 3.4: `add_constraint`, `add_source`, `find_alternative`, `explain_recommendation` MCP tools
+### Slice 3.4 — split into 3.4a + 3.4b
 
-- [ ] **Done when:** All four tools work. `add_source` accepts a URL, fetches and parses it, attaches to trip with embedding.
+The original entry bundled all four tools. Split on 2026-05-29 per the modification-vs-context axis. Pair tools sharing a structural pattern get written and reviewed together (description-corpus discipline from slice 3.3's marsh observation). add_source's v1.0 scope (URL fetch only / + embedding / + per-site parsers) is a substantial design decision in its own right and deserves a focused session, not a passing call inside a four-tool slice.
+
+#### Slice 3.4a: `add_constraint` + `find_alternative` MCP tools
+
+- [ ] **Done when:** Both tools work in Claude Desktop. `add_constraint` appends to Trip.constraints and enqueues a refine job. `find_alternative` returns 3 alternatives for one block with rationales.
+- **Tools share structural pattern:** both modification tools, both feed into trip changes via the slice-3.3 active-job pattern (where applicable), both carry the prohibition discipline against "applied/done/ready" claims.
+- **Tests:** unit per tool + integration. Mocked-LLM only; manual Claude Desktop validation post-merge.
+- Ticket: `trip-concierge-9p7`.
+
+#### Slice 3.4b: `add_source` + `explain_recommendation` MCP tools + `source_ingestion` service
+
+- [ ] **Done when:** Both tools work. `add_source` accepts a URL, fetches and parses it, attaches to trip (with embedding per scope decision below). `explain_recommendation` returns sources + rationale for a Block.
+- **Tools share structural pattern:** both context tools, both surface or attach research, both compete in routing against `web_search`, both carry the fabrication-prohibition language.
+- **Open scope decision for slice opening:** add_source v1.0 has three levels — fetch-only (v1.0a), + pgvector embedding (v1.0b), + per-site parsers (v1.0c). BUILD_PLAN's "URL fetch + parse + embed" implies v1.0b minimum.
 - **Files to create:**
   - Tool files
-  - `backend/app/services/source_ingestion.py` (URL fetch + parse + embed)
-- **Tests:** source ingestion handles common formats (Reddit, blog, plain text).
+  - `backend/app/services/source_ingestion.py` (URL fetch + parse + embed depending on chosen v1.0 level)
+- **Tests:** source ingestion handles common formats (Reddit, blog, plain text); pgvector embedding round-trip.
+- Ticket: `trip-concierge-5bw`. Blocked-by `trip-concierge-9p7` so the two slices ship sequentially.
 
 ### Slice 3.5: `share_trip`, `export_trip` MCP tools
 
