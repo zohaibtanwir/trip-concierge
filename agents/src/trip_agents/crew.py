@@ -238,6 +238,28 @@ def run_stub(destination: str) -> list[dict[str, Any]]:
     return data
 
 
+# Slice 3.3 commit 3 stubs. The actual hierarchical crew composition and
+# the day-scoped regen logic land in commit 4. These exist now so the
+# backend worker module can import them and ship as standalone CI-green.
+# Tests for refine/regen paths mock these (see backend/tests/test_worker.py).
+
+
+def refine(trip_id: str, refinement_description: str, **kwargs: Any) -> dict[str, Any]:
+    """Hierarchical refine entry point. Slice 3.3 commit 4 implements; this
+    stub exists so commit 3 (the worker wrapper) can import cleanly.
+    """
+    _ = (trip_id, refinement_description, kwargs)
+    raise NotImplementedError("crew.refine — implementation lands in slice 3.3 commit 4")
+
+
+def regenerate_day(
+    trip_id: str, day_number: int, hint: str | None = None, **kwargs: Any
+) -> dict[str, Any]:
+    """Day-scoped regen entry point. Slice 3.3 commit 4 implements."""
+    _ = (trip_id, day_number, hint, kwargs)
+    raise NotImplementedError("crew.regenerate_day — implementation lands in slice 3.3 commit 4")
+
+
 def _extract_trip_plan(crew_result: Any) -> TripPlan:
     """Pull a TripPlan from a Crew kickoff result.
 

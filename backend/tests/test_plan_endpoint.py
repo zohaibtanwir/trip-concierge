@@ -15,6 +15,7 @@ assertion is the load-bearing guard against that drift.
 
 from __future__ import annotations
 
+import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -82,11 +83,15 @@ def test_returns_202_with_job_id_and_status_url(client: TestClient, db_session: 
     assert request_dict["group_size"] == 2
     assert request_dict["pace"] == "balanced"
 
-    # Active-job key was set with the job_id and a TTL.
+    # Active-job key was set with a JSON payload + TTL. Slice 3.3 commit 3
+    # widened the Redis value format from a plain string to JSON carrying
+    # both job_id and kind, so refine/regen routes can write the same key
+    # with their own kind label and GET /status can surface what's in flight.
     setex_args = pool.setex.call_args
     assert setex_args.args[0] == f"trip:{trip.id}:active_job"
     assert setex_args.args[1] == 900  # job_timeout
-    assert setex_args.args[2] == "job-xyz"
+    payload = json.loads(setex_args.args[2])
+    assert payload == {"job_id": "job-xyz", "kind": "plan"}
 
 
 def test_returns_404_when_trip_does_not_exist(client: TestClient) -> None:
@@ -99,15 +104,47 @@ def test_returns_404_when_trip_does_not_exist(client: TestClient) -> None:
     assert not pool.enqueue_job.called, "shouldn't enqueue when the trip is missing"
 
 
-def test_returns_409_when_active_job_exists(client: TestClient, db_session: Session) -> None:
+def test_returns_409_when_active_job_exists_legacy_plain_string(
+    client: TestClient, db_session: Session
+) -> None:
+    """A plain-string entry in the active_job key (written by pre-3.3 code
+    or by a stale uvicorn) is tolerated: the route treats it as
+    kind='plan' and surfaces the legacy job_id verbatim in the 409.
+    Graceful degradation, not a crash.
+    """
     trip = _make_trip(db_session)
     pool = _mock_pool(existing_active_job=b"already-running")
     with patch("app.routes.plan.create_pool", return_value=pool):
         response = client.post(f"/trips/{trip.id}/plan")
 
     assert response.status_code == 409
-    assert "already in progress" in response.json()["detail"]
-    assert "already-running" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "already in progress" in detail
+    assert "already-running" in detail
+    # Legacy plain-string entries collapse to kind='plan', so the label
+    # 'planning' surfaces in the message — same UX as a JSON entry with
+    # kind='plan'.
+    assert "planning" in detail
+    assert not pool.enqueue_job.called
+
+
+def test_returns_409_with_kind_aware_message_for_refine_in_flight(
+    client: TestClient, db_session: Session
+) -> None:
+    """A refine job in flight surfaces in the 409 message as 'refinement'
+    — the human-readable label for kind='refine'. The MCP tool layer
+    relies on this to tell the user what kind of job is blocking.
+    """
+    trip = _make_trip(db_session)
+    existing = json.dumps({"job_id": "refine-old", "kind": "refine"}).encode()
+    pool = _mock_pool(existing_active_job=existing)
+    with patch("app.routes.plan.create_pool", return_value=pool):
+        response = client.post(f"/trips/{trip.id}/plan")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "refinement" in detail
+    assert "refine-old" in detail
     assert not pool.enqueue_job.called
 
 

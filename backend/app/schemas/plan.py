@@ -28,6 +28,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 PlanState = Literal["queued", "running", "cancelling", "done", "failed", "cancelled"]
 
+# Slice 3.3: discriminates the in-flight job's type. 'plan' = create_trip's
+# enqueued job, 'refine' = refine_trip's hierarchical job, 'regen' =
+# regenerate_day's day-scoped job. Surfaces in the Redis active_job JSON and
+# in PlanStatus.kind so the MCP get_trip tool can render kind-aware messages.
+JobKind = Literal["plan", "refine", "regen"]
+
 
 class ProgressUpdate(BaseModel):
     """Structured progress event written by the worker's step_callback.
@@ -57,6 +63,9 @@ class PlanStatus(BaseModel):
 
     state: PlanState
     job_id: str | None = None
+    # Slice 3.3: names the active job's kind when there is one. Null for
+    # terminal states (those are recorded in JobRun.kind on the row instead).
+    kind: JobKind | None = None
     approved: bool | None = None
     progress_message: ProgressUpdate | None = None
     error: str | None = None

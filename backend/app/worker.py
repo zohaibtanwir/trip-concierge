@@ -209,6 +209,7 @@ async def plan_trip(
         _write_job_run_session(
             job_id=str(job_id),
             trip_id=UUID(trip_id),
+            kind="plan",
             status="cancelled",
             approved=None,
             error="cancelled by user",
@@ -234,6 +235,7 @@ async def plan_trip(
         _write_job_run_session(
             job_id=str(job_id),
             trip_id=UUID(trip_id),
+            kind="plan",
             status="failed",
             approved=None,
             error=f"{type(exc).__name__}: {exc}",
@@ -260,6 +262,7 @@ async def plan_trip(
     job_run = _write_job_run_session(
         job_id=str(job_id),
         trip_id=UUID(trip_id),
+        kind="plan",
         status="succeeded",
         approved=approved,
         error=None,
@@ -285,6 +288,7 @@ def _write_job_run_session(
     *,
     job_id: str,
     trip_id: UUID,
+    kind: str,
     status: str,
     approved: bool | None,
     error: str | None,
@@ -299,6 +303,10 @@ def _write_job_run_session(
     Factored out so the worker has one shape for success / failure / cancel.
     Uses backend's session factory so the connection picks up the same
     DATABASE_URL as the rest of the backend.
+
+    `kind` is passed explicitly by every caller — slice 3.3 chose explicit
+    over Redis-lookup-discovery to keep call sites self-evident. Three
+    string literals are the source of truth.
     """
     duration_ms = int((time.monotonic() - monotonic_start) * 1000)
     db_iter = get_session()
@@ -307,6 +315,7 @@ def _write_job_run_session(
         row = JobRun(
             job_id=job_id,
             trip_id=trip_id,
+            kind=kind,
             status=status,
             approved=approved,
             error=error,
@@ -345,10 +354,163 @@ async def _cleanup_redis_keys(redis: Any | None, trip_id: str, *, include_cancel
         await redis.delete(*keys)
 
 
+async def refine_trip(
+    ctx: dict[str, Any],
+    trip_id: str,
+    refinement_description: str,
+) -> dict[str, Any]:
+    """arq task: run the hierarchical refine crew for a trip.
+
+    Slice 3.3 commit 3 — thin wrapper that calls `crew_module.refine`.
+    The actual hierarchical crew composition + persistence semantics
+    land in commit 4. Tests mock `crew_module.refine` (same pattern as
+    plan_trip mocks `crew_module.run`).
+    """
+    job_id = ctx.get("job_id", "unknown")
+    started_at = datetime.now(UTC)
+    monotonic_start = time.monotonic()
+    redis = ctx.get("redis")
+
+    try:
+        await asyncio.to_thread(
+            crew_module.refine,
+            trip_id=trip_id,
+            refinement_description=refinement_description,
+        )
+    except asyncio.CancelledError:
+        _write_job_run_session(
+            job_id=str(job_id),
+            trip_id=UUID(trip_id),
+            kind="refine",
+            status="cancelled",
+            approved=None,
+            error="cancelled by user",
+            agent_summary=[],
+            started_at=started_at,
+            monotonic_start=monotonic_start,
+            total_cost=Decimal("0"),
+            total_tokens=0,
+        )
+        await _cleanup_redis_keys(redis, trip_id, include_cancelling=True)
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        if _is_retryable(exc):
+            logger.warning("refine_trip.retryable_error", extra={"job_id": job_id})
+            raise RetryableJobError(str(exc)) from exc
+        _write_job_run_session(
+            job_id=str(job_id),
+            trip_id=UUID(trip_id),
+            kind="refine",
+            status="failed",
+            approved=None,
+            error=f"{type(exc).__name__}: {exc}",
+            agent_summary=[],
+            started_at=started_at,
+            monotonic_start=monotonic_start,
+            total_cost=Decimal("0"),
+            total_tokens=0,
+        )
+        await _cleanup_redis_keys(redis, trip_id, include_cancelling=False)
+        raise FatalJobError(str(exc)) from exc
+
+    # Success — commit 4 wires real persistence; for now record the row.
+    job_run = _write_job_run_session(
+        job_id=str(job_id),
+        trip_id=UUID(trip_id),
+        kind="refine",
+        status="succeeded",
+        approved=None,
+        error=None,
+        agent_summary=[],
+        started_at=started_at,
+        monotonic_start=monotonic_start,
+        total_cost=Decimal("0"),
+        total_tokens=0,
+    )
+    await _cleanup_redis_keys(redis, trip_id, include_cancelling=False)
+    return {"job_id": job_run.job_id, "trip_id": str(trip_id), "status": job_run.status}
+
+
+async def regenerate_day(
+    ctx: dict[str, Any],
+    trip_id: str,
+    day_number: int,
+    hint: str | None = None,
+) -> dict[str, Any]:
+    """arq task: regenerate a single day's blocks.
+
+    Slice 3.3 commit 3 — wraps `crew_module.regenerate_day`. Same
+    structure as refine_trip; commit 4 implements the underlying crew.
+    """
+    job_id = ctx.get("job_id", "unknown")
+    started_at = datetime.now(UTC)
+    monotonic_start = time.monotonic()
+    redis = ctx.get("redis")
+
+    try:
+        await asyncio.to_thread(
+            crew_module.regenerate_day,
+            trip_id=trip_id,
+            day_number=day_number,
+            hint=hint,
+        )
+    except asyncio.CancelledError:
+        _write_job_run_session(
+            job_id=str(job_id),
+            trip_id=UUID(trip_id),
+            kind="regen",
+            status="cancelled",
+            approved=None,
+            error="cancelled by user",
+            agent_summary=[],
+            started_at=started_at,
+            monotonic_start=monotonic_start,
+            total_cost=Decimal("0"),
+            total_tokens=0,
+        )
+        await _cleanup_redis_keys(redis, trip_id, include_cancelling=True)
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        if _is_retryable(exc):
+            logger.warning("regenerate_day.retryable_error", extra={"job_id": job_id})
+            raise RetryableJobError(str(exc)) from exc
+        _write_job_run_session(
+            job_id=str(job_id),
+            trip_id=UUID(trip_id),
+            kind="regen",
+            status="failed",
+            approved=None,
+            error=f"{type(exc).__name__}: {exc}",
+            agent_summary=[],
+            started_at=started_at,
+            monotonic_start=monotonic_start,
+            total_cost=Decimal("0"),
+            total_tokens=0,
+        )
+        await _cleanup_redis_keys(redis, trip_id, include_cancelling=False)
+        raise FatalJobError(str(exc)) from exc
+
+    job_run = _write_job_run_session(
+        job_id=str(job_id),
+        trip_id=UUID(trip_id),
+        kind="regen",
+        status="succeeded",
+        approved=None,
+        error=None,
+        agent_summary=[],
+        started_at=started_at,
+        monotonic_start=monotonic_start,
+        total_cost=Decimal("0"),
+        total_tokens=0,
+    )
+    await _cleanup_redis_keys(redis, trip_id, include_cancelling=False)
+    return {"job_id": job_run.job_id, "trip_id": str(trip_id), "status": job_run.status}
+
+
 class WorkerSettings:
     """arq WorkerSettings. Run with `arq app.worker.WorkerSettings`."""
 
-    functions = [plan_trip]
+    functions = [plan_trip, refine_trip, regenerate_day]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     max_jobs = 4  # production cap; dev workers can override via env if needed
     job_timeout = JOB_TIMEOUT_SECONDS

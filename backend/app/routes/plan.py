@@ -49,7 +49,7 @@ from trip_agents.schemas import TripRunRequest
 from app.config import settings
 from app.db.session import get_session
 from app.models.job_run import JobRun
-from app.schemas.plan import PlanState, PlanStatus, ProgressUpdate
+from app.schemas.plan import JobKind, PlanState, PlanStatus, ProgressUpdate
 from app.services import trip_service
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,43 @@ def _decode(value: bytes | str | None) -> str | None:
     if value is None:
         return None
     return value.decode() if isinstance(value, bytes) else str(value)
+
+
+# Slice 3.3: the active_job Redis value widened from a plain string
+# (just the arq job_id) to JSON carrying both job_id and kind. Refine
+# and regen routes write the same key with their own kind label, and
+# GET /status surfaces it back via PlanStatus.kind.
+KIND_LABELS: dict[str, str] = {
+    "plan": "planning",
+    "refine": "refinement",
+    "regen": "day regeneration",
+}
+
+
+def encode_active_value(*, job_id: str, kind: JobKind) -> str:
+    """Build the JSON payload written to trip:{id}:active_job."""
+    return json.dumps({"job_id": job_id, "kind": kind})
+
+
+def decode_active_value(raw: bytes | str | None) -> tuple[str, str] | None:
+    """Return (job_id, kind) from the active_job Redis value, or None
+    if the key is absent.
+
+    Tolerates legacy plain-string entries (anything written by pre-3.3
+    code that didn't know about kind) by treating them as kind='plan'.
+    Graceful degradation, not a crash — the value's only purpose is
+    routing follow-up calls, and 'plan' is the right default for legacy.
+    """
+    if raw is None:
+        return None
+    text = raw.decode() if isinstance(raw, bytes) else str(raw)
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict) and "job_id" in obj:
+            return str(obj["job_id"]), str(obj.get("kind", "plan"))
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return text, "plan"
 
 
 def _build_request(trip: Any) -> TripRunRequest:
@@ -122,11 +159,12 @@ async def enqueue_plan(trip_id: uuid.UUID, db: SessionDep) -> dict[str, str]:
 
     existing = await redis.get(active_key)
     if existing is not None:
-        existing_id = existing.decode() if isinstance(existing, bytes) else str(existing)
+        existing_id, existing_kind = decode_active_value(existing)  # type: ignore[misc]
+        label = KIND_LABELS.get(existing_kind, "background")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"a planning job is already in progress for trip {trip_id} "
+                f"a {label} job is already in progress for trip {trip_id} "
                 f"(job {existing_id}); cancel via DELETE /trips/{trip_id}/plan "
                 "before retrying"
             ),
@@ -142,7 +180,11 @@ async def enqueue_plan(trip_id: uuid.UUID, db: SessionDep) -> dict[str, str]:
             detail="failed to enqueue plan job",
         )
 
-    await redis.setex(active_key, _ACTIVE_JOB_KEY_TTL_SECONDS, job.job_id)
+    await redis.setex(
+        active_key,
+        _ACTIVE_JOB_KEY_TTL_SECONDS,
+        encode_active_value(job_id=job.job_id, kind="plan"),
+    )
 
     return {
         "job_id": job.job_id,
@@ -196,19 +238,25 @@ async def get_plan_status(trip_id: uuid.UUID, db: SessionDep) -> PlanStatus:
     if cancelling is not None:
         return PlanStatus(state="cancelling", trip_url=f"/trips/{trip_id}")
 
-    active_job = _decode(await redis.get(f"trip:{trip_id}:active_job"))
-    if active_job is not None:
+    active = decode_active_value(await redis.get(f"trip:{trip_id}:active_job"))
+    if active is not None:
+        active_job, active_kind = active
+        kind_typed: JobKind | None = (
+            active_kind if active_kind in ("plan", "refine", "regen") else None  # type: ignore[assignment]
+        )
         arq_status = await Job(active_job, redis=redis).status()
         progress_raw = await redis.get(f"trip:{trip_id}:progress")
         if arq_status == JobStatus.queued:
             return PlanStatus(
                 state="queued",
                 job_id=active_job,
+                kind=kind_typed,
                 trip_url=f"/trips/{trip_id}",
             )
         return PlanStatus(
             state="running",
             job_id=active_job,
+            kind=kind_typed,
             progress_message=_parse_progress(progress_raw),
             trip_url=f"/trips/{trip_id}",
         )
@@ -259,8 +307,9 @@ async def cancel_plan(trip_id: uuid.UUID, db: SessionDep) -> Response:
     active_key = f"trip:{trip_id}:active_job"
     cancelling_key = f"trip:{trip_id}:cancelling"
 
-    active_job = _decode(await redis.get(active_key))
-    if active_job is not None:
+    active = decode_active_value(await redis.get(active_key))
+    if active is not None:
+        active_job, _ = active
         # Tombstone BEFORE abort_job so GET-after-DELETE never sees a 404.
         # The worker's CancelledError handler deletes the tombstone after
         # writing JobRun(status="cancelled"); the 30s TTL is a backstop.

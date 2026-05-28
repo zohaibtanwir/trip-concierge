@@ -226,3 +226,90 @@ def test_is_retryable_classifies_429_and_5xx() -> None:
     assert not worker._is_retryable(_err(404))
     assert not worker._is_retryable(ValueError("nope"))
     assert worker._is_retryable(httpx.ConnectError("network down"))
+
+
+# ---------------------------------------------------------------------------
+# Slice 3.3 commit 3: refine_trip and regenerate_day worker tasks. The crew
+# functions they wrap are stubbed in agents/crew.py until commit 4; these
+# tests mock them at the worker boundary, same pattern as plan_trip mocking
+# crew_module.run.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_refine_trip_success_writes_kind_refine() -> None:
+    """refine_trip wraps the crew call, then writes JobRun(kind='refine')."""
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(return_value={"approved": True})
+
+    with (
+        patch.object(worker.crew_module, "refine", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+    ):
+        result = await worker.refine_trip(_ctx(), str(uuid.uuid4()), "make Day 2 chiller")
+
+    assert crew_mock.called, "crew.refine wasn't called — patch target may be wrong"
+    added = [c.args[0] for c in session_mock.add.call_args_list]
+    assert len(added) == 1
+    job_run = added[0]
+    assert job_run.kind == "refine"
+    assert job_run.status == "succeeded"
+    assert result["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_refine_trip_fatal_error_writes_failed_with_kind_refine() -> None:
+    """Crew raises → FatalJobError wrap + JobRun(status='failed', kind='refine')."""
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(side_effect=ValueError("unparseable refine output"))
+
+    with (
+        patch.object(worker.crew_module, "refine", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+        pytest.raises(FatalJobError, match="unparseable refine output"),
+    ):
+        await worker.refine_trip(_ctx(), str(uuid.uuid4()), "anything")
+
+    added = [c.args[0] for c in session_mock.add.call_args_list]
+    assert len(added) == 1
+    assert added[0].kind == "refine"
+    assert added[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_day_success_writes_kind_regen() -> None:
+    """regenerate_day wraps the crew call, writes JobRun(kind='regen')."""
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(return_value={"approved": True})
+
+    with (
+        patch.object(worker.crew_module, "regenerate_day", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+    ):
+        result = await worker.regenerate_day(_ctx(), str(uuid.uuid4()), 2, "more food, less hiking")
+
+    assert crew_mock.called
+    added = [c.args[0] for c in session_mock.add.call_args_list]
+    assert len(added) == 1
+    job_run = added[0]
+    assert job_run.kind == "regen"
+    assert job_run.status == "succeeded"
+    assert result["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_day_fatal_error_writes_failed_with_kind_regen() -> None:
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(side_effect=ValueError("crew blew up"))
+
+    with (
+        patch.object(worker.crew_module, "regenerate_day", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+        pytest.raises(FatalJobError, match="crew blew up"),
+    ):
+        await worker.regenerate_day(_ctx(), str(uuid.uuid4()), 1)
+
+    added = [c.args[0] for c in session_mock.add.call_args_list]
+    assert len(added) == 1
+    assert added[0].kind == "regen"
+    assert added[0].status == "failed"
