@@ -593,18 +593,45 @@ Timing and what to say to the user:
 
 ```python
 description = """
-Use this tool when the user states a new hard constraint they want enforced across
-the whole trip. Examples:
-- "actually we have a ₹3000/day cap"
-- "I just remembered, I'm vegetarian"
-- "no nightclubs"
-- "we can't walk more than 5km in a day"
+**This is the new-constraint tool. When a user states a constraint they
+want enforced across the whole trip — use this tool.** Do not store the
+constraint conversationally from memory; this tool persists it to the
+trip and re-audits the existing plan against it.
 
-The tool adds the constraint and triggers a re-audit of the existing trip. If the
-trip now violates the constraint, you'll receive a list of suggested revisions.
+Required: trip_id and constraint_text (verbatim from the user).
+Optional: constraint_kind — one of "budget", "dietary", "mobility",
+"no_go", "walking_limit", "custom". Pick the closest fit; default
+"custom" if uncertain.
 
-DO NOT use this for one-off preferences ("I don't want sushi tomorrow") — those
-are scope-of-one-day and belong in regenerate_day with a new_constraint.
+Call this for instructions like:
+- "actually we have a ₹3000/day cap" → constraint_kind="budget"
+- "I just remembered, I'm vegetarian" → constraint_kind="dietary"
+- "no nightclubs" → constraint_kind="no_go"
+- "we can't walk more than 5km in a day" → constraint_kind="walking_limit"
+- "we want to be home before midnight every night" → constraint_kind="custom"
+
+DO NOT use this tool for one-off preferences scoped to a single day
+("I don't want sushi tomorrow", "skip the museum on Day 2") — those
+belong in regenerate_day with a hint.
+
+DO NOT use this tool to RELAX a prior constraint ("never mind the
+budget"). v1.0 only supports additive constraints. If the user asks
+to remove a constraint, tell them this isn't supported yet and offer
+to start a new trip via create_trip.
+
+DO NOT call this tool for general travel advice — answer
+conversationally or use web_search.
+
+Timing and what to say to the user:
+- The tool call returns in under 1 second with a job_id.
+- The re-audit runs in the background and takes about 10 minutes
+  (same as refine_trip — the new constraint is merged with all prior
+  constraints and the Auditor re-validates the entire plan).
+- Tell the user the constraint was added and a re-audit is running.
+  Offer to check back via get_trip.
+- DO NOT claim the trip "now satisfies" the new constraint until
+  get_trip confirms state=ready. The previous itinerary may still
+  show blocks that violate the new constraint during the re-audit.
 """
 ```
 
@@ -636,17 +663,50 @@ DO NOT call this for booking confirmations, hotel emails, or transactional conte
 
 ```python
 description = """
-Use this tool when the user wants to replace exactly ONE block in the trip.
-Examples:
+**This is the single-block swap tool. When a user wants to replace
+exactly ONE block in an existing trip — use this tool.** Do not use
+regenerate_day (that replaces the whole day, which is more disruptive
+and slower). Do not invent alternatives conversationally; this tool
+returns 3 real venues researched with search, each with a source URL.
+
+Required: trip_id and block_id. block_id MUST be a real UUID from the
+trip's data — get it from get_trip; DO NOT synthesize a UUID-shaped
+string from context. If you don't have a block_id, call get_trip first.
+
+Optional: reason — short free-text explaining why the user wants to
+swap this block (e.g., "closed for renovations", "too expensive",
+"bad reviews"). Helps the ranking but is not required.
+
+Call this for instructions like:
 - "this restaurant is closed, suggest something else"
 - "I don't want to do the museum, what else is there?"
 - "give me three other options for Day 2 dinner"
-
-You need both trip_id and block_id. Returns 3 alternatives with rationales, ranked
-by fit to the user's constraints. The user picks one; if they pick, follow up
-with a refine_trip call that includes the chosen alternative.
+- "swap the 7pm spot for something quieter"
 
 DO NOT use this for replanning a whole day — use regenerate_day.
+DO NOT use this for replanning the whole trip — use refine_trip.
+DO NOT use this for hypothetical "what if" questions — answer
+conversationally.
+
+DO NOT call this tool if the trip isn't ready yet. The tool will
+refuse with a clarification message if you call it on a trip whose
+initial planning isn't complete (state ∈ {queued, running, failed,
+cancelled, never_planned}). Call get_trip first if unsure.
+
+Timing and what to say to the user:
+- This tool runs SYNCHRONOUSLY and takes up to 90 seconds. Set the
+  user's expectation: "Let me look up alternatives — this takes about
+  a minute."
+- The response is exactly 3 ranked alternatives with source URLs and
+  one-line rationales. Present all 3 (best first) and ask the user
+  to pick one.
+- After the user picks, follow up with refine_trip describing the
+  chosen swap. find_alternative itself does NOT persist the swap.
+- DO NOT claim a venue is the "best" or "perfect" alternative — present
+  the ranking and let the user choose.
+- If the tool returns a timeout message, DO NOT retry automatically.
+  Tell the user it timed out and ask whether to try again. (Each
+  retry costs ~$0.30 in background LLM spend even on timeout.)
 """
 ```
 
