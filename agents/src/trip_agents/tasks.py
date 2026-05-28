@@ -13,7 +13,7 @@ from trip_agents.budget_auditor import budget_auditor
 from trip_agents.local_expert import local_expert
 from trip_agents.logistics import logistics_planner
 from trip_agents.researcher import researcher
-from trip_agents.schemas import AuditedPlan, Day, TripPlan
+from trip_agents.schemas import AlternativesList, AuditedPlan, Day, TripPlan
 
 
 def make_research_task() -> Task:
@@ -174,4 +174,55 @@ def make_regenerate_day_task() -> Task:
         ),
         agent=logistics_planner,
         output_pydantic=Day,
+    )
+
+
+def make_find_alternative_task() -> Task:
+    """Sequential single-agent task for find_alternative — slice 3.4a.
+
+    Description and expected_output are the canonical strings from
+    agents/prompts.md §3.7 (added in slice 3.4a commit 3 alongside
+    this source per agent-code-style.md rule 1).
+
+    Researcher alone (Option B from the file-tree session) — tracked as
+    trip-concierge-5yw for Local Expert addition reassessment after
+    Claude Desktop validation.
+    """
+    return Task(
+        description=(
+            "The user wants to replace one specific block in their existing "
+            "trip. Produce 3 alternatives that fit the trip's context and "
+            "constraints.\n\n"
+            "Trip context: destination={destination}, currency={currency}.\n"
+            "Block to replace: type={block_type}, original "
+            "venue={block_venue_name}, duration={block_duration_minutes} "
+            "minutes, slot time={block_start_time}.\n"
+            "User's reason for swap (may be empty): {reason}.\n"
+            "Trip constraints to respect (rank alternatives by fit to "
+            "these): {constraints_summary}.\n\n"
+            "Return exactly 3 alternatives, ranked by fit (best first). "
+            "For each: venue_name, type (same as the block being replaced "
+            "— venue/meal/activity/transit/rest), an estimated "
+            "duration_minutes (close to the original block's duration is "
+            "best), est_cost in {currency}, source_urls (at least one), "
+            "and a one-line rationale explaining why this venue fits this "
+            "user given the listed constraints.\n\n"
+            "Do NOT generate UUIDs, block IDs, or any IDs in your output "
+            "— those are handled by the caller. Focus your effort on real "
+            "venue research (Tavily search is enabled) and ranking. If you "
+            "cite a venue, you MUST have a source URL for it; do not "
+            "invent venues you can't cite."
+        ),
+        agent=researcher,
+        expected_output=(
+            "JSON matching the AlternativesList schema: an `alternatives` "
+            "array of exactly 3 items. Each item has: venue_name (string), "
+            "type (one of venue|meal|activity|transit|rest, matching the "
+            "block being replaced), duration_minutes (integer, close to "
+            "the original block's duration), est_cost (number), currency "
+            "(3-letter ISO code), source_urls (non-empty array of URLs), "
+            "rationale (short string explaining the fit). Do NOT include "
+            "any UUIDs or block_ids."
+        ),
+        output_pydantic=AlternativesList,
     )

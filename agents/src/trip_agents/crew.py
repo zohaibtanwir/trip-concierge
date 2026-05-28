@@ -34,9 +34,10 @@ from trip_agents.llm import get_langfuse
 from trip_agents.local_expert import local_expert
 from trip_agents.logistics import logistics_planner
 from trip_agents.researcher import researcher
-from trip_agents.schemas import AuditedPlan, Day, TripPlan
+from trip_agents.schemas import AlternativesList, AuditedPlan, Day, TripPlan
 from trip_agents.tasks import (
     make_audit_task,
+    make_find_alternative_task,
     make_local_expertise_task,
     make_planning_task,
     make_refine_task,
@@ -415,3 +416,97 @@ def _try_balanced(text: str) -> Any | None:
                     if parsed is not None:
                         return parsed
     return None
+
+
+# Slice 3.4a commit 3: find_alternative — single-agent (Researcher) sequential
+# crew that returns 3 ranked alternatives for one block. Option B from the
+# file-tree session: Researcher alone for predictable wall time under the
+# 90s route timeout. Local Expert addition tracked as trip-concierge-5yw.
+
+
+def _build_find_alternative_crew(
+    step_callback: Callable[[Any], None] | None = None,
+) -> Crew:
+    """Single-agent (Researcher) sequential crew for find_alternative.
+
+    No manager_llm — sequential, not hierarchical. No Local Expert — the
+    Researcher's prompt explicitly says "rank by fit to constraints",
+    folding part of Local Expert's value into the Researcher prompt for
+    predictable wall time.
+    """
+    task = make_find_alternative_task()
+    kwargs: dict[str, Any] = {
+        "agents": [researcher],
+        "tasks": [task],
+        "process": Process.sequential,
+        "verbose": False,
+    }
+    if step_callback is not None:
+        kwargs["step_callback"] = step_callback
+    return Crew(**kwargs)
+
+
+@observe(name="crew.find_alternative")
+def find_alternative(
+    trip_state: dict[str, Any],
+    block: dict[str, Any],
+    reason: str | None = None,
+    step_callback: Callable[[Any], None] | None = None,
+) -> dict[str, Any]:
+    """Return AlternativesList.model_dump() with exactly 3 ranked alternatives.
+
+    `trip_state` carries destination, currency, and constraints_summary.
+    `block` carries the block being replaced: type, venue_name,
+    duration_minutes, start_time. The route does the block_id → block
+    lookup; this function receives the resolved block context so it stays
+    a pure transform.
+
+    Raises ValueError if the crew's output doesn't validate as a 3-item
+    AlternativesList — the schema-layer enforcement of §3.7's "Return
+    exactly 3 alternatives" instruction.
+    """
+    inputs: dict[str, Any] = {
+        "destination": trip_state.get("destination", "unspecified"),
+        "currency": trip_state.get("currency", "USD"),
+        "constraints_summary": trip_state.get("constraints_summary", "none"),
+        "block_type": block.get("type", "venue"),
+        "block_venue_name": block.get("venue_name", "(unknown)"),
+        "block_duration_minutes": block.get("duration_minutes", 60),
+        "block_start_time": block.get("start_time") or "unspecified",
+        "reason": reason or "(no reason given)",
+    }
+    logger.info(
+        "crew.find_alternative.start",
+        extra={"destination": inputs["destination"], "block_type": inputs["block_type"]},
+    )
+    crew_result = _build_find_alternative_crew(step_callback=step_callback).kickoff(inputs=inputs)
+    alternatives_list = _extract_alternatives_list(crew_result)
+    output: dict[str, Any] = alternatives_list.model_dump()
+    logger.info(
+        "crew.find_alternative.success",
+        extra={"alternatives": len(output.get("alternatives") or [])},
+    )
+    return output
+
+
+def _extract_alternatives_list(crew_result: Any) -> AlternativesList:
+    """Pull AlternativesList from a CrewOutput. Prefers .pydantic (set when
+    output_pydantic validation succeeded); falls back to JSON parsing the
+    raw output. Raises ValueError on any failure so callers surface a
+    clear error instead of silently shipping degraded output.
+    """
+    pyd = getattr(crew_result, "pydantic", None)
+    if isinstance(pyd, AlternativesList):
+        return pyd
+    raw = getattr(crew_result, "raw", None) or str(crew_result)
+    parsed = _parse_json(raw)
+    if isinstance(parsed, dict):
+        try:
+            return AlternativesList.model_validate(parsed)
+        except Exception as e:
+            raise ValueError(
+                f"AlternativesList validation failed: {e}. Raw: {str(raw)[:200]!r}"
+            ) from e
+    raise ValueError(
+        f"AlternativesList could not be extracted from crew result: {str(crew_result)[:200]!r}"
+    )

@@ -350,6 +350,67 @@ The crew DOES receive `locked_blocks` as read-only context so it can plan around
 
 ---
 
+### 3.7 find_alternative_task
+
+```python
+find_alternative_task = Task(
+    description=(
+        "The user wants to replace one specific block in their existing "
+        "trip. Produce 3 alternatives that fit the trip's context and "
+        "constraints.\n\n"
+        "Trip context: destination={destination}, currency={currency}.\n"
+        "Block to replace: type={block_type}, original "
+        "venue={block_venue_name}, duration={block_duration_minutes} "
+        "minutes, slot time={block_start_time}.\n"
+        "User's reason for swap (may be empty): {reason}.\n"
+        "Trip constraints to respect (rank alternatives by fit to "
+        "these): {constraints_summary}.\n\n"
+        "Return exactly 3 alternatives, ranked by fit (best first). "
+        "For each: venue_name, type (same as the block being replaced "
+        "— venue/meal/activity/transit/rest), an estimated "
+        "duration_minutes (close to the original block's duration is "
+        "best), est_cost in {currency}, source_urls (at least one), "
+        "and a one-line rationale explaining why this venue fits this "
+        "user given the listed constraints.\n\n"
+        "Do NOT generate UUIDs, block IDs, or any IDs in your output "
+        "— those are handled by the caller. Focus your effort on real "
+        "venue research (Tavily search is enabled) and ranking. If you "
+        "cite a venue, you MUST have a source URL for it; do not "
+        "invent venues you can't cite."
+    ),
+    agent=researcher,
+    expected_output=(
+        "JSON matching the AlternativesList schema: an `alternatives` "
+        "array of exactly 3 items. Each item has: venue_name (string), "
+        "type (one of venue|meal|activity|transit|rest, matching the "
+        "block being replaced), duration_minutes (integer, close to "
+        "the original block's duration), est_cost (number), currency "
+        "(3-letter ISO code), source_urls (non-empty array of URLs), "
+        "rationale (short string explaining the fit). Do NOT include "
+        "any UUIDs or block_ids."
+    ),
+    output_pydantic=AlternativesList,
+)
+```
+
+**Why Researcher alone (not Local Expert too):**
+
+Slice 3.4a chose Option B (Researcher-alone, single-agent `Process.sequential`) over Option A (Researcher → Local Expert, two-agent sequential). The decision criteria were wall-time variance under the slice's 90s sync-route timeout and the size of the task.
+
+- **Wall-time budget.** find_alternative runs synchronously inside an MCP request — the 90s timeout is a hard ceiling, not a soft target. Each additional crew agent adds an LLM hop (~10-25s p50, longer p99 with tool calls). A two-agent chain that p99s past 90s would tail-cut the user's MCP turn. Researcher-alone keeps the worst-case bounded.
+- **Task surface area.** find_alternative is "3 venues that fit constraints" — narrower than the full initial-generation flow where Local Expert's "why this, not that" reasoning earns its keep against tourist-trap selection. For one swap, the marginal quality from a second pass is small; the variance cost is not.
+- **Reassessment path.** Tracked as trip-concierge-5yw. After Claude Desktop validation surfaces real quality data on Researcher-alone alternatives, we'll decide whether to upgrade. The trade-off is reversible — adding Local Expert is a description-and-context edit, not a refactor.
+
+**Why "Do NOT generate UUIDs" appears twice (task + field):**
+
+The prohibition lives at two layers: in this task description (above) and in the MCP tool's `FindAlternativeInput.block_id` field description (§4.7). Belt-and-suspenders, intentional.
+
+- **Task-level catches the crew.** Without explicit prohibition, Researcher LLMs hallucinate `block_id: "uuid-here"` strings into the structured output ~15% of the time per slice 3.3's regenerate_day observation. The schema would accept the extra field (Alternative has `extra="allow"`) and downstream code would silently break on the bogus IDs.
+- **Field-level catches the caller LLM.** The MCP host (Claude Desktop) reads tool parameter docs to decide what to send. Without "MUST be a real block_id from the trip", the host can synthesize a UUID-shaped string from context and call with garbage. The 404 path is loud but the wasted turn is real.
+- **Same principle as locked-block exclusion (§3.6).** When the model cannot generate something, it cannot accidentally generate it wrong. Schema-layer enforcement (Alternative excludes a `block_id` field) plus prompt prohibition is more robust than either alone.
+
+---
+
 ## 4. MCP Tool Descriptions
 
 These descriptions are what Claude Desktop and ChatGPT read to decide *when* to call each tool. Write them from the LLM's perspective. Tell it both when to call and when **not** to call.

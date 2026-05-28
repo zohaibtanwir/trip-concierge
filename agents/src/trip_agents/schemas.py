@@ -249,3 +249,43 @@ class RegenerateDayInput(BaseModel):
             "Leave unset if the user didn't give a specific hint."
         ),
     )
+
+
+class Alternative(BaseModel):
+    """One ranked alternative venue produced by find_alternative.
+
+    Slice 3.4a commit 3. Per agents/prompts.md §3.7, the Researcher is
+    instructed to produce real venues with citations — `source_urls`
+    non-empty + a substantive `rationale` are the load-bearing fields
+    that distinguish a real recommendation from a fabrication.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    venue_name: str = Field(min_length=1)
+    type: Literal["venue", "meal", "activity", "transit", "rest"]
+    duration_minutes: int = Field(gt=0)
+    est_cost: float = Field(ge=0)
+    currency: str = Field(min_length=3, max_length=3)
+    source_urls: list[str] = Field(min_length=1)
+    rationale: str = Field(min_length=10)
+
+
+class AlternativesList(BaseModel):
+    """find_alternative output — exactly 3 ranked alternatives.
+
+    The min_length=max_length=3 constraint is the load-bearing schema-layer
+    enforcement of §3.7's "Return exactly 3 alternatives" instruction.
+    If the crew drifts to 2 or 4 items, output_pydantic validation fails
+    and crew.find_alternative raises a clear error rather than silently
+    returning degraded output.
+
+    Belt and suspenders against LLM drift:
+    1. Task prompt (§3.7) says "Return exactly 3 alternatives".
+    2. AlternativesList schema enforces it via Field(min_length=3, max_length=3).
+    3. _extract_alternatives_list helper in crew.py surfaces the failure.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    alternatives: list[Alternative] = Field(min_length=3, max_length=3)
