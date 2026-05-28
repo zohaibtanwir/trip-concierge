@@ -157,6 +157,37 @@ def format_trip_succeeded(full_trip: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip()
 
 
+# Slice 3.3 commit 6 (Q6 alignment): map JobRun.error's exception class to a
+# user-friendly category. The full raw error stays in JobRun.error for backend
+# debugging via SQL; only the category text reaches the LLM, which prevents
+# internal class names, Pydantic URLs, and traceback fragments from leaking
+# into Claude Desktop responses.
+_ERROR_CATEGORIES: dict[str, str] = {
+    "ValidationError": "the planner produced an incomplete itinerary",
+    "TimeoutError": "the planner ran out of time",
+    "RateLimitError": "an API rate limit was hit",
+    "APIError": "an upstream API failure",
+    "_default": "an internal error",
+}
+
+
+def _categorize_error(error: str | None) -> str | None:
+    """Return the user-friendly category for a JobRun.error string.
+
+    JobRun.error is formatted by the worker as "<ClassName>: <message>"
+    (see app/worker.py _write_job_run_session callers). Split on the first
+    colon to recover the class name, then look it up. Unknown classes fall
+    through to _default — honest degradation, not silent failure.
+
+    Returns None if `error` is None/empty so the caller can suppress the
+    "what went wrong" line entirely.
+    """
+    if not error:
+        return None
+    class_name = error.split(":", 1)[0].strip() if ":" in error else error.strip()
+    return _ERROR_CATEGORIES.get(class_name, _ERROR_CATEGORIES["_default"])
+
+
 def format_trip_failed(
     *,
     trip_id: uuid.UUID,
@@ -168,12 +199,14 @@ def format_trip_failed(
     Slice-thesis load-bearer — names "failed" plainly, no softer language,
     offers concrete next steps. Per §4.2 description: the LLM is told to
     surface this verbatim.
+
+    Per the Q6 design (file-tree session), the raw JobRun.error text is
+    NOT exposed to the LLM. Only the mapped error category is. This keeps
+    internal exception details (Pydantic URLs, validation tracebacks,
+    class names) out of the user-facing response.
     """
-    error_line = ""
-    if error:
-        # Strip the "ClassName: " prefix if present; keep the human message.
-        msg = error.split(":", 1)[-1].strip() if ":" in error else error
-        error_line = f"What went wrong: {msg[:200]}\n\n"
+    category = _categorize_error(error)
+    error_line = f"What went wrong: {category}.\n\n" if category else ""
     return (
         f"Your {destination} trip's planning didn't complete successfully (id {trip_id}).\n"
         f"\n"
