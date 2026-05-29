@@ -24,6 +24,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,13 @@ logger = logging.getLogger(__name__)
 FIXTURE_PATH = (
     Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "researcher_output.json"
 )
+
+# Where _extract_trip_plan dumps the raw crew result on failure so the
+# next non-deterministic dzc-fingerprint failure preserves evidence
+# instead of evaporating into a JobRun.error string with `input_value={}`
+# and no way to tell whether the LLM produced literal `{}` or CrewOutput
+# rendered degenerately. Override via monkeypatch in tests.
+_CREW_FAILURE_DUMP_DIR = Path("/tmp")
 
 MAX_AUDIT_PASSES = 2
 
@@ -370,6 +378,14 @@ def _extract_trip_plan(crew_result: Any) -> TripPlan:
 
     Prefers .pydantic (set when output_pydantic= matched), falls back to
     parsing str(result) which may contain prose around the JSON.
+
+    On extraction failure (slice dzc-a observability): dumps the raw
+    crew_result to a timestamped file in _CREW_FAILURE_DUMP_DIR and
+    attaches a `failure dump: <path>` note to the exception via
+    Python 3.11 add_note(). The worker reads notes and surfaces them
+    into JobRun.error. Disk-write errors are suppressed — the original
+    exception MUST propagate so dzc-b can read the dump on the next
+    real failure.
     """
     if hasattr(crew_result, "pydantic") and isinstance(crew_result.pydantic, TripPlan):
         return crew_result.pydantic
@@ -377,8 +393,38 @@ def _extract_trip_plan(crew_result: Any) -> TripPlan:
     if isinstance(parsed, list):
         parsed = {"days": parsed}
     if isinstance(parsed, dict):
-        return TripPlan.model_validate(parsed)
-    raise ValueError(f"could not extract TripPlan from {str(crew_result)[:200]!r}")
+        try:
+            return TripPlan.model_validate(parsed)
+        except Exception as exc:  # noqa: BLE001 — preserve original class for slice-3.3 _categorize_error
+            _dump_crew_failure_and_add_note(exc, crew_result)
+            raise
+    err = ValueError(f"could not extract TripPlan from {str(crew_result)[:200]!r}")
+    _dump_crew_failure_and_add_note(err, crew_result)
+    raise err
+
+
+def _dump_crew_failure_and_add_note(exc: BaseException, crew_result: Any) -> None:
+    """Persist crew_result.raw (or str fallback) to a timestamped file
+    in _CREW_FAILURE_DUMP_DIR and attach a `failure dump:` note to the
+    given exception.
+
+    Filename pattern `crew_failure_<YYYYMMDDTHHMMSSZ>.json` — compact ISO
+    so it sorts chronologically and is filesystem-safe (no colons or
+    dots).
+
+    Disk-write errors are suppressed so we don't mask the original crew
+    bug behind disk-space errors. When write fails the note still points
+    at the intended path with a `(write failed)` marker so a debugger
+    knows to investigate the dump-path infrastructure separately.
+    """
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    dump_path = _CREW_FAILURE_DUMP_DIR / f"crew_failure_{timestamp}.json"
+    raw = getattr(crew_result, "raw", None) or str(crew_result)
+    try:
+        dump_path.write_text(str(raw))
+        exc.add_note(f"failure dump: {dump_path}")
+    except OSError:
+        exc.add_note(f"failure dump: {dump_path} (write failed)")
 
 
 def _parse_json(raw_output: str) -> Any:

@@ -242,7 +242,7 @@ async def plan_trip(
             kind="plan",
             status="failed",
             approved=None,
-            error=f"{type(exc).__name__}: {exc}",
+            error=_format_error_with_notes(exc),
             agent_summary=events,
             started_at=started_at,
             monotonic_start=monotonic_start,
@@ -286,6 +286,24 @@ async def plan_trip(
         "status": job_run.status,
         "approved": approved,
     }
+
+
+def _format_error_with_notes(exc: BaseException) -> str:
+    """Format an exception for JobRun.error, preserving the class-name
+    prefix that slice-3.3 mcp_server/_responses.py:_categorize_error
+    splits on, AND appending any exc.__notes__ lines (Python 3.11+).
+
+    Notes are appended on fresh lines so post-mortem SQL queries like
+    `WHERE error LIKE '%failure dump:%'` can extract artifact pointers
+    without parsing the original exception message. Slice dzc-a's
+    crew.py _extract_trip_plan adds a `failure dump: <path>` note;
+    this formatter surfaces it.
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    notes = getattr(exc, "__notes__", None) or []
+    if notes:
+        text += "\n" + "\n".join(notes)
+    return text
 
 
 def _write_job_run_session(
