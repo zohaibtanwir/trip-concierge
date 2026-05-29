@@ -19,6 +19,24 @@ import uuid
 from typing import Any
 
 
+def _share_url(trip_id: uuid.UUID) -> str:
+    """Single source of truth for the trip share URL.
+
+    Slice 3.5 changed the convention from /trips/{id} (pre-3.5 — pointed
+    at the auth-protected GET /trips/{id}/full endpoint; broken share UX)
+    to /shared/{id} (unauth viewer endpoint, backend/app/routes/shared.py).
+
+    The /shared/ convention is pinned by three URL pin tests in
+    test_responses.py + test_share_trip.py. A future refactor that
+    reintroduces /trips/{id} breaks those tests deliberately.
+
+    Revocable per-link tokens are deferred to ticket trip-concierge-gid
+    (P3, v1.0b). Until then, trip_id IS the share token (UUIDv4 = 128
+    bits of entropy bounds the attack surface).
+    """
+    return f"https://tripconcierge.app/shared/{trip_id}"
+
+
 def format_created_trip(
     *,
     trip_id: uuid.UUID,
@@ -639,3 +657,104 @@ def format_explain_block_not_found(*, trip_id: uuid.UUID, block_id: uuid.UUID) -
         f"Call get_trip to see the current blocks, then try again "
         f"with a real block_id."
     )
+
+
+# ---------------------------------------------------------------------------
+# Slice 3.5: response formatters for share_trip + export_trip.
+# share_trip is structurally novel (pure URL construction, no backend call);
+# both formatters consume _share_url defined above as the single source of
+# truth for the URL convention.
+# ---------------------------------------------------------------------------
+
+
+def format_share_succeeded(*, trip_id: uuid.UUID, destination: str | None, share_url: str) -> str:
+    """share_trip happy path. The URL renders on its own line so Claude
+    Desktop link-renders it. Honest framing about un-revocability per
+    the v1.0a privacy model (no per-link revocation; trip-concierge-gid
+    tracks v1.0b).
+
+    destination is the LLM-orchestrator hand-off from a prior turn
+    (get_trip / create_trip). When provided, the message names the
+    real destination ("your Goa trip"); when None, it falls back to a
+    generic "your trip" — honest-broken at the formatter layer.
+    """
+    intro = (
+        f"Share link for your {destination} trip (id {trip_id}):"
+        if destination
+        else f"Share link for your trip (id {trip_id}):"
+    )
+    return (
+        f"{intro}\n"
+        f"\n"
+        f"{share_url}\n"
+        f"\n"
+        f"Anyone with this link can view the trip — they don't need to "
+        f"sign in. The link doesn't expire today; v1.0 doesn't support "
+        f"revoking links after sharing (you can delete the trip entirely "
+        f"to make the link 404)."
+    )
+
+
+def format_share_not_ready(state: str) -> str:
+    """share_trip state-aware refusal. Structure mirrors
+    format_regenerate_day_not_ready from slice 3.3 verbatim per the
+    corpus-consistency review.
+    """
+    if state in ("never_planned", "queued", "running"):
+        return (
+            "This trip isn't ready to share yet — it's still being "
+            "planned. Try get_trip in a few minutes; once it's done "
+            "I'll generate the share link."
+        )
+    if state == "failed":
+        return (
+            "I can't share a trip whose planning didn't complete. Try "
+            "create_trip again from scratch, or refine_trip if you want "
+            "to adjust the inputs and retry."
+        )
+    return (
+        f"This trip is in a state I can't share from — likely cancelled "
+        f"(state={state}). Use create_trip to start fresh."
+    )
+
+
+def format_export_succeeded_markdown(*, trip_id: uuid.UUID, destination: str, content: str) -> str:
+    """export_trip happy with format=markdown. Inline content because
+    Markdown renders well in conversation. The `---` separator before
+    and after lets the LLM distinguish wrapper text from the export
+    body so it doesn't add commentary INSIDE the user's pastable
+    content.
+    """
+    del trip_id  # available if needed for future surfaces; unused for now
+    return (
+        f"Here's your {destination} trip as Markdown — paste this "
+        f"anywhere:\n"
+        f"\n"
+        f"---\n"
+        f"\n"
+        f"{content}\n"
+        f"\n"
+        f"---"
+    )
+
+
+def format_export_succeeded_json(*, trip_id: uuid.UUID, char_count: int) -> str:
+    """export_trip happy with format=json. OPT-IN disclosure — does NOT
+    inline the JSON body because a typical trip is 3-8 KB of structured
+    data that renders as a wall of braces in conversation (slice-opening
+    Q3 decision). Surfaces char_count + asks the user whether to see
+    the full dump.
+    """
+    return (
+        f"Exported your trip {trip_id} as JSON ({char_count:,} characters).\n"
+        f"\n"
+        f"(Showing the JSON inline would be noisy. Want me to dump it to "
+        f"the conversation, or do you want to re-import it somewhere?)"
+    )
+
+
+def format_export_failed(*, trip_id: uuid.UUID, reason: str) -> str:
+    """export_trip catch-all for non-2xx responses. Mirrors
+    format_alternative_failed cadence per slice-3.4a precedent.
+    """
+    return f"I couldn't export trip {trip_id} — {reason}.\n\nWant me to try a different format?"

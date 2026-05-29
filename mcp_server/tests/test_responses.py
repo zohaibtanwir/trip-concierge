@@ -616,3 +616,183 @@ def test_explain_block_not_found_routes_to_get_trip() -> None:
     assert str(block_id) in text
     assert "get_trip" in text
     assert "block" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Slice 3.5 commit 3: response formatters for share_trip + export_trip,
+# plus the cross-formatter URL pin (load-bearing) — pins the /shared/{id}
+# convention introduced in slice 3.5 against future refactors that might
+# reintroduce the pre-3.5 broken /trips/{id} URL.
+# ---------------------------------------------------------------------------
+
+
+def test_share_url_helper_uses_shared_prefix_not_trips_prefix() -> None:
+    """Cross-formatter URL pin 1/3 — _share_url is the single source of truth.
+
+    Pre-3.5 convention was https://tripconcierge.app/trips/{id} which
+    pointed at an auth-protected endpoint (broken share UX). Slice 3.5
+    introduced /shared/{id} (unauth viewer endpoint, routes/shared.py).
+
+    Pin the helper. Future refactors that reintroduce /trips/{id} break
+    this test deliberately.
+    """
+    from trip_mcp.tools._responses import _share_url
+
+    url = _share_url(_TRIP_ID)
+    assert url.startswith("https://tripconcierge.app/shared/")
+    assert "/trips/" not in url
+    assert str(_TRIP_ID) in url
+
+
+def test_created_trip_and_share_succeeded_use_identical_url_convention() -> None:
+    """Cross-formatter URL pin 2/3 — sister formatters must agree.
+
+    Drift between format_created_trip and format_share_succeeded is the
+    regression class this test guards. Both formatters take share_url as
+    a parameter; this test pins that callers pass URLs from the same
+    _share_url helper, and that the resulting rendered text contains
+    /shared/ (not /trips/) on both paths.
+    """
+    from trip_mcp.tools._responses import (
+        _share_url,
+        format_created_trip,
+        format_share_succeeded,
+    )
+
+    url = _share_url(_TRIP_ID)
+    created_text = format_created_trip(
+        trip_id=_TRIP_ID,
+        destination="Goa",
+        budget_total=None,
+        currency="USD",
+        share_url=url,
+    )
+    share_text = format_share_succeeded(
+        trip_id=_TRIP_ID,
+        destination="Goa",
+        share_url=url,
+    )
+
+    assert "/shared/" in created_text
+    assert "/shared/" in share_text
+    assert "/trips/" not in created_text
+    assert "/trips/" not in share_text
+
+
+def test_share_succeeded_includes_no_revocation_promise_v1_0a_privacy_model() -> None:
+    """v1.0a privacy model is share-by-URL with no per-link revocation.
+    The formatter MUST tell the user honestly — pinning so a future
+    refactor doesn't drift toward implying revocation that we don't
+    actually support yet. Tracked as trip-concierge-gid for v1.0b.
+    """
+    from trip_mcp.tools._responses import _share_url, format_share_succeeded
+
+    text = format_share_succeeded(
+        trip_id=_TRIP_ID, destination="Goa", share_url=_share_url(_TRIP_ID)
+    )
+    lower = text.lower()
+    # Some honest framing about un-revocability.
+    assert "doesn't expire" in lower or "doesn't support revoking" in lower or ("v1.0" in lower)
+    # Must NOT promise anything we can't deliver.
+    assert "you can revoke" not in lower
+    assert "you can delete" not in lower or "delete the trip" in lower
+
+
+def test_share_succeeded_falls_back_to_generic_message_when_destination_is_none() -> None:
+    """Honest-broken at the formatter layer (slice 3.5 push-back from
+    end-of-slice review). When the LLM doesn't know the destination
+    (e.g., user said 'share my trip' without prior get_trip context),
+    destination=None must render a generic-but-correct share message —
+    NOT inject a literal "None" string or "your None trip" wording.
+
+    Pins the LLM-orchestrator pattern: pure-function tools accept
+    context from prior turns, fall back gracefully when context is
+    absent. Same shape as Option C for state (slice 3.5 design).
+    """
+    from trip_mcp.tools._responses import _share_url, format_share_succeeded
+
+    url = _share_url(_TRIP_ID)
+    text = format_share_succeeded(trip_id=_TRIP_ID, destination=None, share_url=url)
+
+    # URL + trip_id still surface — the load-bearing content is intact.
+    assert str(_TRIP_ID) in text
+    assert url in text
+    # No literal "None" leaks into user-facing text.
+    assert "None" not in text
+    # No "your None trip" wording slip.
+    assert "your None" not in text
+    # Generic-but-correct framing surfaces.
+    lower = text.lower()
+    assert "your trip" in lower or "share link for your trip" in lower
+
+
+def test_share_not_ready_branches_on_state_matching_regenerate_day_pattern() -> None:
+    """Corpus-consistency pin — state-aware branching mirrors
+    format_regenerate_day_not_ready from slice 3.3.
+
+    states: never_planned / queued / running → "still being planned"
+    state: failed                            → "didn't complete"
+    state: cancelled / other                 → "likely cancelled"
+    """
+    from trip_mcp.tools._responses import format_share_not_ready
+
+    for in_progress in ("never_planned", "queued", "running"):
+        text = format_share_not_ready(in_progress).lower()
+        assert "still being planned" in text or "still planning" in text, (
+            f"state={in_progress} should surface in-progress language; got {text!r}"
+        )
+        assert "get_trip" in text
+
+    failed = format_share_not_ready("failed").lower()
+    assert "didn't complete" in failed or "did not complete" in failed
+    assert "create_trip" in failed or "refine_trip" in failed
+
+    other = format_share_not_ready("cancelled").lower()
+    assert "cancelled" in other or "start fresh" in other
+
+
+def test_export_succeeded_markdown_renders_inline_with_separator() -> None:
+    """Markdown content is inline because Markdown renders well in
+    conversation. The `---` separator lets the LLM distinguish wrapper
+    text from export content per slice 3.5 corpus design.
+    """
+    from trip_mcp.tools._responses import format_export_succeeded_markdown
+
+    content = "# Goa, India\n\n## Day 1\nAnjuna Beach"
+    text = format_export_succeeded_markdown(trip_id=_TRIP_ID, destination="Goa", content=content)
+    assert "Goa" in text
+    assert "Anjuna Beach" in text
+    assert "---" in text
+    # Some "paste this" framing so the user knows they can copy it.
+    lower = text.lower()
+    assert "paste" in lower or "copy" in lower
+
+
+def test_export_succeeded_json_uses_opt_in_disclosure_not_inline() -> None:
+    """JSON branch DOES NOT inline the JSON body (would be wall-of-braces
+    in conversation per slice-opening Q3). Surfaces char_count + asks
+    the user whether to see the full dump.
+    """
+    from trip_mcp.tools._responses import format_export_succeeded_json
+
+    text = format_export_succeeded_json(trip_id=_TRIP_ID, char_count=3456)
+
+    # char_count surfaces in some humanized form.
+    assert "3,456" in text or "3456" in text
+    # Opt-in disclosure language present.
+    lower = text.lower()
+    assert "want" in lower or "show" in lower or "dump" in lower
+    # Trip id surfaces so the LLM keeps it in context for a follow-up.
+    assert str(_TRIP_ID) in text
+
+
+def test_export_failed_names_failure_with_reason() -> None:
+    """Catch-all for non-2xx export responses. Names the trip id +
+    reason; offers retry path. Mirrors format_alternative_failed cadence.
+    """
+    from trip_mcp.tools._responses import format_export_failed
+
+    text = format_export_failed(trip_id=_TRIP_ID, reason="trip not found")
+    assert str(_TRIP_ID) in text
+    assert "trip not found" in text
+    assert "couldn't" in text.lower() or "could not" in text.lower()

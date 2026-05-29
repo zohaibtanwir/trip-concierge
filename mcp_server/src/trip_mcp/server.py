@@ -34,10 +34,12 @@ from trip_agents.schemas import (
     AddSourceInput,
     CreateTripInput,
     ExplainRecommendationInput,
+    ExportTripInput,
     FindAlternativeInput,
     GetTripInput,
     RefineTripInput,
     RegenerateDayInput,
+    ShareTripInput,
 )
 
 from trip_mcp.config import backend_url
@@ -45,10 +47,12 @@ from trip_mcp.tools import add_constraint as add_constraint_tool
 from trip_mcp.tools import add_source as add_source_tool
 from trip_mcp.tools import create_trip as create_trip_tool
 from trip_mcp.tools import explain_recommendation as explain_recommendation_tool
+from trip_mcp.tools import export_trip as export_trip_tool
 from trip_mcp.tools import find_alternative as find_alternative_tool
 from trip_mcp.tools import get_trip as get_trip_tool
 from trip_mcp.tools import refine_trip as refine_trip_tool
 from trip_mcp.tools import regenerate_day as regenerate_day_tool
+from trip_mcp.tools import share_trip as share_trip_tool
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +127,16 @@ async def list_tools() -> list[types.Tool]:
             description=explain_recommendation_tool.DESCRIPTION,
             inputSchema=ExplainRecommendationInput.model_json_schema(),
         ),
+        types.Tool(
+            name="share_trip",
+            description=share_trip_tool.DESCRIPTION,
+            inputSchema=ShareTripInput.model_json_schema(),
+        ),
+        types.Tool(
+            name="export_trip",
+            description=export_trip_tool.DESCRIPTION,
+            inputSchema=ExportTripInput.model_json_schema(),
+        ),
     ]
 
 
@@ -172,6 +186,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         text = await explain_recommendation_tool.explain_recommendation(
             trip_id=uuid.UUID(arguments["trip_id"]),
             block_id=uuid.UUID(arguments["block_id"]),
+        )
+        return [types.TextContent(type="text", text=text)]
+    if name == "share_trip":
+        text = await share_trip_tool.share_trip(
+            trip_id=uuid.UUID(arguments["trip_id"]),
+            state=arguments.get("state"),
+            destination=arguments.get("destination"),
+        )
+        return [types.TextContent(type="text", text=text)]
+    if name == "export_trip":
+        text = await export_trip_tool.export_trip(
+            trip_id=uuid.UUID(arguments["trip_id"]),
+            format=arguments.get("format", "markdown"),
         )
         return [types.TextContent(type="text", text=text)]
     raise ValueError(f"unknown tool: {name}")

@@ -32,6 +32,7 @@ from trip_agents.schemas import CreateTripInput
 from trip_mcp.auth import NoTokenError, load_token
 from trip_mcp.config import backend_url, default_token_file
 from trip_mcp.tools._responses import (
+    _share_url,
     format_clarification_needed,
     format_create_failed,
     format_created_trip,
@@ -85,9 +86,11 @@ def _http_client(token: str) -> httpx.Client:
     )
 
 
-def _share_url(trip_id: uuid.UUID) -> str:
-    # The PWA at this path lands the user on the trip view. PRD §F1.
-    return f"https://tripconcierge.app/trips/{trip_id}"
+# _share_url lifted to trip_mcp.tools._responses (slice 3.5) — single source
+# of truth for the URL convention. Pre-3.5 the helper returned
+# /trips/{id}; slice 3.5 changed it to /shared/{id} (unauth viewer
+# endpoint). See _responses.py:_share_url docstring + the three
+# URL pin tests in test_responses.py + test_share_trip.py.
 
 
 def _missing_fields_from_validation_error(exc: ValidationError) -> list[str]:

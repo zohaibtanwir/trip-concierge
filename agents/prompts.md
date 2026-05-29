@@ -830,16 +830,48 @@ forward.
 
 ```python
 description = """
-Use this tool when the user wants to share their plan with someone else or open
-it in the visual web app.
+**This is the share-link tool. When the user wants to share their trip
+with someone else, or open it in the visual web app — use this tool.**
+Do not paste the URL into the conversation from memory; this tool
+returns the canonical share URL the backend knows about.
 
-Two modes:
-- 'read' (default): generates a read-only share link
-- 'collab': generates a link that allows the invited person to edit (requires
-  sign-in for the recipient)
+Required: trip_id.
+Optional: state — the trip state from a recent get_trip call.
 
-Returns a URL the user can copy. The PWA at that URL has the map view, drag-to-edit,
-and offline export — features that don't render well in chat.
+Returns a URL the user can copy. Anyone with the URL can view the
+trip (read-only) — there's no separate sign-in or invite step.
+v1.0a does NOT support revoking the URL after sharing; trip data
+should not be considered private (treat the URL like an unlisted
+YouTube video — security through obscurity at 128 bits, but anyone
+with the link can see it).
+
+Call this for instructions like:
+- "share this trip with my partner"
+- "send this to my friend"
+- "give me a link I can text"
+- "I want to see this in the web app"
+
+DO NOT use this for printable/offline formats — use export_trip
+instead (Markdown is portable; PDF is planned for v1.0b).
+
+DO NOT use this if the trip isn't ready yet. The tool will return
+a clarification message if the state value is in
+{queued, running, failed, cancelled, never_planned}. If you're
+unsure of state, call get_trip first and pass state=<the value
+you read> into this tool.
+
+DO NOT promise revocation. If the user asks "can I delete the link
+later?", tell them honestly: not yet (v1.0a). They can delete the
+trip entirely, which makes the link 404, but there's no per-link
+revocation.
+
+Timing and what to say to the user:
+- The tool returns in under 100ms (no backend call — pure URL
+  construction).
+- Present the URL on its own line so Claude Desktop renders it as
+  a clickable link.
+- If the user asks how the recipient signs in — tell them they
+  don't need to. The link works for anyone.
 """
 ```
 
@@ -847,16 +879,48 @@ and offline export — features that don't render well in chat.
 
 ```python
 description = """
-Use this tool when the user wants the trip in a portable format.
+**This is the export tool. When the user wants their trip in a
+portable format — use this tool.** Do not synthesize the export
+content conversationally; this tool returns the canonical rendering
+the backend produces, so future re-exports stay byte-identical.
 
-Formats:
-- 'pdf' — printable / offline-friendly, includes map snapshots and per-venue QR codes
-- 'whatsapp' — formatted text suitable for pasting into WhatsApp
-- 'google_maps' — URL that opens as a Google Maps saved list
-- 'text' — plain text summary
+Required: trip_id and format. Format is one of:
+- "json" — full structured data, suitable for programmatic re-import
+- "markdown" — human-readable day-by-day, pasteable into Notion /
+  WhatsApp / Apple Notes / any text app
 
-Returns a URL (for PDF and Google Maps) or the text content directly (for whatsapp
-and text). PDF and Google Maps URLs expire after 7 days.
+Call this for instructions like:
+- "give me a Markdown version I can paste into Notion"
+- "export this as JSON" (data-pipeline / re-import use cases)
+- "I want to text my partner the full itinerary"
+- "send me a copy I can paste into my notes app"
+
+DO NOT use this for sharing — use share_trip instead. share_trip
+returns a URL; export_trip returns the content. Different UX.
+
+DO NOT use this for printable/PDF formats yet. PDF + map snapshots
++ QR codes is planned for v1.0b. If the user asks for PDF, tell
+them honestly: not yet, but Markdown is portable enough for most
+text-paste use cases.
+
+DO NOT use this for WhatsApp-specific formatting or Google Maps
+URLs. Markdown is close to WhatsApp-flavored text but not identical;
+Google Maps URL generation is planned for v1.0c. If the user asks,
+suggest pasting the Markdown export.
+
+DO NOT use this if the trip isn't ready yet. The export of a
+half-planned trip would be misleading. Call get_trip first if
+unsure.
+
+Timing and what to say to the user:
+- The tool returns in 1-2 seconds (pure DB read + stdlib formatting).
+- For Markdown, present the full content inline — Claude Desktop
+  renders Markdown nicely. For JSON, mention the format briefly
+  but don't paste the full JSON unless the user specifically asks
+  to see it (it's noisy).
+- DO NOT claim the export "captures" the trip if state isn't done.
+  Tell the user honestly the export reflects current state, which
+  may be partial.
 """
 ```
 
