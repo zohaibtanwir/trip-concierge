@@ -6,5 +6,6 @@ from app.models.job_run import JobRun
 from app.models.source import Source
 from app.models.trip import Trip
 from app.models.user import User
+from app.models.user_source import UserSource
 
-__all__ = ["Block", "Day", "JobRun", "Source", "Trip", "User"]
+__all__ = ["Block", "Day", "JobRun", "Source", "Trip", "User", "UserSource"]

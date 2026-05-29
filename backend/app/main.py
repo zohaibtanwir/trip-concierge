@@ -4,7 +4,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.db.startup_check import verify_alembic_at_head
-from app.routes import alternative, auth, constraints, plan, refine, regenerate, trips
+from app.routes import (
+    alternative,
+    auth,
+    constraints,
+    explain,
+    plan,
+    refine,
+    regenerate,
+    sources,
+    trips,
+)
 
 
 @asynccontextmanager
@@ -23,6 +33,8 @@ app.include_router(refine.router)
 app.include_router(regenerate.router)
 app.include_router(constraints.router)
 app.include_router(alternative.router)
+app.include_router(sources.router)
+app.include_router(explain.router)
 app.include_router(auth.router)
 
 
