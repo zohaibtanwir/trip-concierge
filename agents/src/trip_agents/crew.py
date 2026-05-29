@@ -81,7 +81,10 @@ DEFAULT_INPUTS = {
 }
 
 
-def _build_crew(step_callback: Callable[[Any], None] | None = None) -> Crew:
+def _build_crew(
+    step_callback: Callable[[Any], None] | None = None,
+    task_callback: Callable[[Any], None] | None = None,
+) -> Crew:
     """Sequential 3-agent crew: Researcher → Local Expert → Logistics Planner.
 
     Budget Auditor is NOT in this crew — it runs as a Python-orchestrated
@@ -90,6 +93,11 @@ def _build_crew(step_callback: Callable[[Any], None] | None = None) -> Crew:
     `step_callback` is plumbed through to CrewAI so the worker can collect
     per-agent step events for the JobRun.agent_summary column. None is fine
     when nothing's listening.
+
+    `task_callback` (slice qek-a) is plumbed in parallel — fires once per
+    task completion with the task output. Diagnostic and potential
+    workaround for the qek symptom where step_callback never fires from
+    worker context. See _make_callbacks docstring in backend/app/worker.py.
     """
     research = make_research_task()
     expertise = make_local_expertise_task(research)
@@ -102,6 +110,8 @@ def _build_crew(step_callback: Callable[[Any], None] | None = None) -> Crew:
     }
     if step_callback is not None:
         kwargs["step_callback"] = step_callback
+    if task_callback is not None:
+        kwargs["task_callback"] = task_callback
     return Crew(**kwargs)
 
 
@@ -109,18 +119,28 @@ def _build_crew(step_callback: Callable[[Any], None] | None = None) -> Crew:
 def run(
     destination: str,
     step_callback: Callable[[Any], None] | None = None,
+    task_callback: Callable[[Any], None] | None = None,
     **overrides: Any,
 ) -> dict[str, Any]:
     """Live: main crew → audit loop. Returns the final AuditedPlan dict.
 
     `step_callback` is forwarded to the main crew and each audit pass so
     every agent step the worker observes lands in JobRun.agent_summary.
+
+    `task_callback` (slice qek-a) is forwarded ONLY to the main 3-agent
+    crew, not to the audit loop. qek's failing fingerprint is the main
+    plan crew; the audit loop hasn't yet shown the same symptom and is
+    deferred per scope discipline. If post-merge data shows audit
+    callbacks also missing, qek-b extends.
     """
     inputs: dict[str, Any] = {**DEFAULT_INPUTS, "destination": destination, **overrides}
     logger.info("crew.run.start", extra={"destination": destination})
 
     # 1. Main 3-agent crew produces a TripPlan.
-    crew_result = _build_crew(step_callback=step_callback).kickoff(inputs=inputs)
+    crew_result = _build_crew(
+        step_callback=step_callback,
+        task_callback=task_callback,
+    ).kickoff(inputs=inputs)
     plan = _extract_trip_plan(crew_result)
 
     # 2. Audit loop owns retry policy.

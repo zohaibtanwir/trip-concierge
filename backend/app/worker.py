@@ -100,29 +100,43 @@ def _is_retryable(exc: BaseException) -> bool:
     return isinstance(exc, _ALWAYS_RETRYABLE)
 
 
-def _make_step_callback(
+def _make_callbacks(
     redis: Any | None = None,
     trip_id: str | None = None,
     loop: asyncio.AbstractEventLoop | None = None,
-) -> tuple[list[dict[str, Any]], Any]:
-    """Return (event_list, callback). The callback appends step events to
-    the list as CrewAI fires them. We dump the list to JobRun.agent_summary
-    when the job ends. Tolerant of unknown step shapes since CrewAI's
-    callback contract has shifted across releases.
+) -> tuple[list[dict[str, Any]], Any, Any, dict[str, int]]:
+    """Return (events, step_cb, task_cb, counters) — slice qek-a observability.
 
-    If `redis`, `trip_id`, and `loop` are all provided, the callback also
-    writes a ProgressUpdate JSON to `trip:{trip_id}:progress` — the status
-    endpoint reads this. Best-effort: a Redis failure must not fail the job.
+    Both callbacks close over the SAME `events` list AND the SAME `counters`
+    dict. List/dict mutations are atomic under the GIL so concurrent firings
+    from CrewAI's ThreadPoolExecutor stay coherent.
+
+    counters is `{"step": 0, "task": 0}` — read by the worker via
+    `_append_callback_summary()` to surface a `callback_summary` entry into
+    events before writing JobRun.agent_summary. This makes the qek
+    "zero fires" smoking-gun state unambiguous in SQL post-mortems.
+
+    Both callbacks emit a structured log at info level (downgrade in qek-b
+    once the failing path is known).
+
+    If `redis`, `trip_id`, and `loop` are all provided, step_cb also writes
+    a ProgressUpdate JSON to `trip:{trip_id}:progress` — best-effort.
 
     `loop` must be the running asyncio loop captured before entering
-    `asyncio.to_thread`. The callback runs on a worker thread (no loop of
-    its own), so we bridge via `run_coroutine_threadsafe`.
+    `asyncio.to_thread`. The callbacks run on a worker thread (no loop of
+    their own), so we bridge via `run_coroutine_threadsafe`.
     """
     events: list[dict[str, Any]] = []
+    counters: dict[str, int] = {"step": 0, "task": 0}
     started = time.monotonic()
     progress_key = f"trip:{trip_id}:progress" if (redis is not None and trip_id and loop) else None
 
-    def cb(step: Any) -> None:
+    def step_cb(step: Any) -> None:
+        counters["step"] += 1
+        logger.info(
+            "step_callback.fired",
+            extra={"step_class": type(step).__name__, "step_index": counters["step"]},
+        )
         entry: dict[str, Any] = {
             "event": type(step).__name__,
             "elapsed_ms": int((time.monotonic() - started) * 1000),
@@ -164,7 +178,42 @@ def _make_step_callback(
                 # Progress is observability, not correctness. Never kill the job.
                 logger.debug("plan.progress_write.skipped", exc_info=True)
 
-    return events, cb
+    def task_cb(task_output: Any) -> None:
+        counters["task"] += 1
+        logger.info(
+            "task_callback.fired",
+            extra={
+                "task_index": counters["task"],
+                "output_class": type(task_output).__name__,
+            },
+        )
+        events.append(
+            {
+                "event": "task_completed",
+                "task_index": counters["task"],
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+                "timestamp": datetime.now(UTC).isoformat(),
+                "output_excerpt": (str(task_output)[:200] if task_output is not None else None),
+            }
+        )
+
+    return events, step_cb, task_cb, counters
+
+
+def _append_callback_summary(events: list[dict[str, Any]], counters: dict[str, int]) -> None:
+    """Append the qek-a callback_summary entry to events.
+
+    Called by every terminal-path JobRun write (success / failed / cancelled)
+    so the diagnostic surfaces even when the crew raised before any callback
+    fired — the load-bearing zero-callback signal.
+    """
+    events.append(
+        {
+            "event": "callback_summary",
+            "step_callback_count": counters["step"],
+            "task_callback_count": counters["task"],
+        }
+    )
 
 
 # Progress key TTL — short. The status endpoint reads it best-effort; a
@@ -196,7 +245,7 @@ async def plan_trip(
     # can schedule writes from inside asyncio.to_thread.
     redis = ctx.get("redis")
     loop = asyncio.get_running_loop()
-    events, cb = _make_step_callback(redis=redis, trip_id=trip_id, loop=loop)
+    events, step_cb, task_cb, counters = _make_callbacks(redis=redis, trip_id=trip_id, loop=loop)
 
     try:
         # The crew call dominates wall time. Run in the thread pool so the
@@ -204,12 +253,14 @@ async def plan_trip(
         output = await asyncio.to_thread(
             crew_module.run,
             destination=request["destination"],
-            step_callback=cb,
+            step_callback=step_cb,
+            task_callback=task_cb,
             **{k: v for k, v in request.items() if k != "destination"},
         )
     except asyncio.CancelledError:
         # User cancelled — write JobRun, clean up DELETE's tombstone and
         # active_job key, re-raise so arq marks the job done.
+        _append_callback_summary(events, counters)
         _write_job_run_session(
             job_id=str(job_id),
             trip_id=UUID(trip_id),
@@ -236,6 +287,7 @@ async def plan_trip(
             )
             raise RetryableJobError(str(exc)) from exc
 
+        _append_callback_summary(events, counters)
         _write_job_run_session(
             job_id=str(job_id),
             trip_id=UUID(trip_id),
@@ -263,6 +315,7 @@ async def plan_trip(
             next(db_iter)
 
     approved = bool(output.get("approved")) if "approved" in output else None
+    _append_callback_summary(events, counters)
     job_run = _write_job_run_session(
         job_id=str(job_id),
         trip_id=UUID(trip_id),
@@ -445,7 +498,11 @@ async def refine_trip(
     monotonic_start = time.monotonic()
     redis = ctx.get("redis")
     loop = asyncio.get_running_loop()
-    events, cb = _make_step_callback(redis=redis, trip_id=trip_id, loop=loop)
+    # qek-a: _make_callbacks returns the 4-tuple; refine doesn't yet wire
+    # task_callback because the refine crew (agents/crew.py:run_refine) was
+    # deliberately left out of qek-a scope. _task_cb is captured but unused;
+    # qek-b will extend if refine surfaces the same symptom.
+    events, step_cb, _task_cb, _counters = _make_callbacks(redis=redis, trip_id=trip_id, loop=loop)
 
     # Load the trip state on the worker thread (sync SQLAlchemy).
     db_iter = get_session()
@@ -464,7 +521,7 @@ async def refine_trip(
             crew_module.refine,
             trip_state=trip_state,
             refinement_description=refinement_description,
-            step_callback=cb,
+            step_callback=step_cb,
         )
     except asyncio.CancelledError:
         _write_job_run_session(
@@ -554,7 +611,9 @@ async def regenerate_day(
     monotonic_start = time.monotonic()
     redis = ctx.get("redis")
     loop = asyncio.get_running_loop()
-    events, cb = _make_step_callback(redis=redis, trip_id=trip_id, loop=loop)
+    # qek-a: 4-tuple; regenerate_day doesn't yet wire task_callback
+    # because the regen crew was left out of qek-a scope. _task_cb unused.
+    events, step_cb, _task_cb, _counters = _make_callbacks(redis=redis, trip_id=trip_id, loop=loop)
 
     # Load + partition.
     db_iter = get_session()
@@ -590,7 +649,7 @@ async def regenerate_day(
             locked_blocks=locked_block_dicts,
             unlocked_positions=unlocked_positions,
             hint=hint,
-            step_callback=cb,
+            step_callback=step_cb,
         )
     except asyncio.CancelledError:
         _write_job_run_session(
