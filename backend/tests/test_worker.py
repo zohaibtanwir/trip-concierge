@@ -89,13 +89,56 @@ class _FakeStep:
 
 
 def _make_crew_run_that_fires_callback(output: dict[str, Any]):
-    """Build a fake crew.run that invokes the step_callback before returning."""
+    """Build a fake crew.run that invokes BOTH step_callback and
+    task_callback (slice qek-a contract). This is the "everything works"
+    fake — qek-a's diagnostics-and-workaround design wires both
+    callbacks; tests for scenarios where only one fires use the
+    per-scenario fakes below.
+    """
 
-    def _crew_run(destination: str, step_callback=None, **kwargs):  # noqa: ANN001
+    def _crew_run(destination: str, step_callback=None, task_callback=None, **kwargs):  # noqa: ANN001
         if step_callback is not None:
             step_callback(_FakeStep("Travel Researcher", "found candidates"))
             step_callback(_FakeStep("Local Expert", "narrowed picks"))
             step_callback(_FakeStep("Logistics Planner", "built day-by-day plan"))
+        if task_callback is not None:
+            task_callback("research task complete")
+            task_callback("local-expert task complete")
+            task_callback("planning task complete")
+        return output
+
+    return _crew_run
+
+
+def _make_crew_run_that_fires_only_task_callback(output: dict[str, Any]):
+    """Test A scenario — qek symptom replayed. CrewAI's step_callback
+    pathway is silently bypassed (the diagnosis hypothesis we want to
+    confirm in production), but crew.task_callback still fires once per
+    task. If the next real worker run lands in this state, diagnostic 2
+    has BOTH revealed the bug AND provided a working observability
+    surface — task_callback alone gives 3 events per crew run.
+    """
+
+    def _crew_run(destination: str, step_callback=None, task_callback=None, **kwargs):  # noqa: ANN001
+        # step_callback NEVER fires — the qek symptom.
+        if task_callback is not None:
+            task_callback("research task complete")
+            task_callback("local-expert task complete")
+            task_callback("planning task complete")
+        return output
+
+    return _crew_run
+
+
+def _make_crew_run_that_fires_nothing(output: dict[str, Any]):
+    """Test C scenario — neither callback fires. The "we shipped the bug"
+    state. agent_summary should still contain exactly one entry: the
+    callback_summary entry with both counts at 0. Without that entry the
+    "zero callbacks" signal is indistinguishable from "we forgot to
+    append the summary."
+    """
+
+    def _crew_run(destination: str, step_callback=None, task_callback=None, **kwargs):  # noqa: ANN001
         return output
 
     return _crew_run
@@ -139,11 +182,25 @@ async def test_success_writes_job_run_with_agent_summary() -> None:
     job_run = added[0]
     assert job_run.status == "succeeded"
     assert job_run.error is None
-    # step_callback fired three times for the three crew agents.
-    assert len(job_run.agent_summary) == 3
-    roles = [e.get("agent_role") for e in job_run.agent_summary]
+
+    # Filter-based assertions (slice qek-a discipline) — durable against
+    # adding more event types in future diagnostics.
+    summary = job_run.agent_summary
+    step_events = [e for e in summary if e.get("agent_role") is not None]
+    task_events = [e for e in summary if e.get("event") == "task_completed"]
+    summary_events = [e for e in summary if e.get("event") == "callback_summary"]
+    assert len(step_events) == 3, f"3 step events expected from 3 agents; got {summary}"
+    assert len(task_events) == 3, f"3 task events expected from 3 tasks; got {summary}"
+    assert len(summary_events) == 1, "exactly one callback_summary entry expected"
+
+    roles = [e.get("agent_role") for e in step_events]
     assert "Travel Researcher" in roles
     assert "Logistics Planner" in roles
+
+    # The callback_summary entry surfaces the counts the qek diagnostic
+    # depends on. If step=0 in a real run, qek's failing-path is confirmed.
+    assert summary_events[0]["step_callback_count"] == 3
+    assert summary_events[0]["task_callback_count"] == 3
 
     assert result["status"] == "succeeded"
     assert result["approved"] is True
@@ -166,6 +223,15 @@ async def test_fatal_error_writes_failed_job_run() -> None:
     job_run = added[0]
     assert job_run.status == "failed"
     assert "unparseable LLM output" in (job_run.error or "")
+    # qek-a contract: even on the failure path the callback_summary
+    # surfaces — counts are 0/0 because the crew raised before any
+    # callback fired. Length-based assertion on this path is intentional;
+    # zero-callback is the entire signal.
+    summary = job_run.agent_summary
+    assert len(summary) == 1
+    assert summary[0]["event"] == "callback_summary"
+    assert summary[0]["step_callback_count"] == 0
+    assert summary[0]["task_callback_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -209,6 +275,126 @@ async def test_cancellation_writes_cancelled_job_run() -> None:
     assert len(added) == 1
     assert added[0].status == "cancelled"
     assert "cancelled" in (added[0].error or "").lower()
+    # qek-a contract: callback_summary lands even on the cancelled path.
+    summary = added[0].agent_summary
+    summary_events = [e for e in summary if e.get("event") == "callback_summary"]
+    assert len(summary_events) == 1, "callback_summary must land on cancelled path too"
+
+
+# ---------------------------------------------------------------------------
+# Slice qek-a: 3 NEW tests pinning the shared-events closure contract.
+# Test A and Test C are the load-bearers — Test A pins the "task_callback
+# alone gives 3 events" scenario which may BE the qek fix; Test C pins the
+# "zero callbacks → summary still surfaces zero counts" signal that qek-b
+# will look for in real-worker run data.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task_callback_alone_populates_agent_summary_when_step_callback_silent() -> None:
+    """Test A — qek symptom replayed under qek-a contract.
+
+    The hypothesis from qek investigation: under our CrewAI 1.14.5 config,
+    step_callback never fires (~8 visible agent banners + agent_summary=[]
+    in the production fingerprint). If task_callback fires per-task even
+    when step_callback doesn't, this scenario shows agent_summary with 3
+    task_completed entries + 1 callback_summary entry with counts (0, 3).
+
+    This isn't just diagnostic — it's a workaround. If the next real run
+    produces this shape, the slice ships qek with task_callback as the
+    primary signal even before step_callback is repaired.
+    """
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(
+        side_effect=_make_crew_run_that_fires_only_task_callback(_audited_plan_dict())
+    )
+
+    with (
+        patch.object(worker.crew_module, "run", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+        patch("app.worker.persist_audited_plan"),
+    ):
+        await worker.plan_trip(_ctx(), str(uuid.uuid4()), _request())
+
+    added = [c.args[0] for c in session_mock.add.call_args_list]
+    assert len(added) == 1
+    summary = added[0].agent_summary
+
+    step_events = [e for e in summary if e.get("agent_role") is not None]
+    task_events = [e for e in summary if e.get("event") == "task_completed"]
+    summary_events = [e for e in summary if e.get("event") == "callback_summary"]
+    assert len(step_events) == 0, "step_callback path is silent — the qek symptom"
+    assert len(task_events) == 3, "task_callback fires 3 times — the qek workaround"
+    assert len(summary_events) == 1
+    assert summary_events[0]["step_callback_count"] == 0
+    assert summary_events[0]["task_callback_count"] == 3
+
+    # task_completed entries surface task index + timestamp + output excerpt
+    # so qek-b can correlate against logs without re-running the crew.
+    for idx, evt in enumerate(task_events, start=1):
+        assert evt["task_index"] == idx
+        assert "elapsed_ms" in evt
+        assert "timestamp" in evt
+
+
+@pytest.mark.asyncio
+async def test_both_callbacks_firing_reflects_real_counts_in_summary_entry() -> None:
+    """Test B — happy state. Both callbacks fire (step 3x + task 3x).
+    Summary entry surfaces the actual counts so the SQL post-mortem can
+    distinguish 'partial firing' from 'no firing' even at a glance.
+    """
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(side_effect=_make_crew_run_that_fires_callback(_audited_plan_dict()))
+
+    with (
+        patch.object(worker.crew_module, "run", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+        patch("app.worker.persist_audited_plan"),
+    ):
+        await worker.plan_trip(_ctx(), str(uuid.uuid4()), _request())
+
+    summary = session_mock.add.call_args_list[0].args[0].agent_summary
+    summary_events = [e for e in summary if e.get("event") == "callback_summary"]
+    assert len(summary_events) == 1
+    assert summary_events[0]["step_callback_count"] == 3
+    assert summary_events[0]["task_callback_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_zero_callbacks_still_surfaces_summary_entry_with_both_counts_zero() -> None:
+    """Test C — the load-bearer. The 'we shipped qek-a but the bug is
+    even worse than expected' state: neither step_callback nor
+    task_callback fires.
+
+    Without the callback_summary entry, agent_summary would be empty —
+    indistinguishable from 'we forgot to write the summary' or from
+    'the worker crashed before assembling the JobRun'. The single
+    callback_summary entry with (0, 0) is the unambiguous signal qek-b
+    will look for in real production data.
+
+    Length-based assertion is intentional here — the count IS the
+    assertion. If agent_summary has anything OTHER than the summary
+    entry, the slice's diagnostic contract is broken.
+    """
+    session_mock, session_iter = _patch_db_writes()
+    crew_mock = MagicMock(side_effect=_make_crew_run_that_fires_nothing(_audited_plan_dict()))
+
+    with (
+        patch.object(worker.crew_module, "run", crew_mock),
+        patch("app.worker.get_session", side_effect=session_iter),
+        patch("app.worker.persist_audited_plan"),
+    ):
+        await worker.plan_trip(_ctx(), str(uuid.uuid4()), _request())
+
+    summary = session_mock.add.call_args_list[0].args[0].agent_summary
+    assert len(summary) == 1, (
+        f"agent_summary must contain exactly 1 entry (the callback_summary) "
+        f"when neither callback fires; got {summary}"
+    )
+    entry = summary[0]
+    assert entry["event"] == "callback_summary"
+    assert entry["step_callback_count"] == 0
+    assert entry["task_callback_count"] == 0
 
 
 def test_is_retryable_classifies_429_and_5xx() -> None:
