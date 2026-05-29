@@ -430,3 +430,189 @@ def test_alternative_failed_catchall_includes_reason() -> None:
     assert str(_TRIP_ID) in text
     assert "upstream API error" in text
     assert "couldn't" in text.lower() or "could not" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Slice 3.4b commit 4: response formatters for add_source and
+# explain_recommendation. Each formatter test pins its load-bearing
+# property — the highest-traffic surface in the slice deserves dense
+# per-shape coverage.
+# ---------------------------------------------------------------------------
+
+
+def test_source_attached_echoes_char_count_and_routes_to_refine() -> None:
+    from trip_mcp.tools._responses import format_source_attached
+
+    text = format_source_attached(
+        trip_id=_TRIP_ID, content_type="url_fetched/html", char_count=4321
+    )
+    assert str(_TRIP_ID) in text
+    # char_count with humanized formatting OR raw int.
+    assert "4,321" in text or "4321" in text
+    assert "url_fetched/html" in text
+    assert "refine_trip" in text
+    # Prohibition discipline — must NOT claim the planner already used it.
+    for forbidden in ("has read", "is using", "now applied", "already applied"):
+        assert forbidden not in text.lower()
+
+
+def test_source_fetch_failed_offers_paste_without_claiming_attached() -> None:
+    from trip_mcp.tools._responses import format_source_fetch_failed
+
+    text = format_source_fetch_failed(
+        trip_id=_TRIP_ID,
+        url="https://example.com/article",
+        reason="timeout",
+    )
+    assert str(_TRIP_ID) in text
+    assert "https://example.com/article" in text
+    assert "timeout" in text
+    assert "paste" in text.lower()
+    assert "couldn't" in text.lower() or "could not" in text.lower()
+    # Must NOT claim attached.
+    assert "attached" not in text.lower() or "couldn't" in text.lower()
+
+
+def test_source_denied_host_explains_security_reason() -> None:
+    from trip_mcp.tools._responses import format_source_denied_host
+
+    text = format_source_denied_host("http://localhost/internal")
+    assert "http://localhost/internal" in text
+    # Names the security reason, not just "denied".
+    lower = text.lower()
+    assert "private ip" in lower or "metadata" in lower or "security" in lower
+    # Offers paste alternative.
+    assert "paste" in lower or "different" in lower
+
+
+def test_source_too_large_surfaces_byte_count_and_2mb_cap() -> None:
+    from trip_mcp.tools._responses import format_source_too_large
+
+    text = format_source_too_large(byte_count=3_500_000)
+    # Humanized or raw byte count.
+    assert "3,500,000" in text or "3500000" in text or "3.5" in text
+    # The 2 MB cap is mentioned so the user understands the scale.
+    assert "2 MB" in text or "2MB" in text or "2,000,000" in text
+    # Offers shorter excerpt path.
+    assert "excerpt" in text.lower() or "shorter" in text.lower() or "paste" in text.lower()
+
+
+def test_source_unsupported_content_type_explains_format_constraint() -> None:
+    from trip_mcp.tools._responses import format_source_unsupported_content_type
+
+    text = format_source_unsupported_content_type(content_type="image/png")
+    assert "image/png" in text
+    # Names the supported types so the user understands the constraint.
+    lower = text.lower()
+    assert "html" in lower or "plain text" in lower or "json" in lower
+    assert "paste" in lower or "different url" in lower
+
+
+def test_source_active_job_surfaces_label_and_routes_to_get_trip() -> None:
+    from trip_mcp.tools._responses import format_source_active_job
+
+    text = format_source_active_job(active_job_kind="refine", active_job_id="refine-existing")
+    assert "refinement" in text.lower(), "must surface KIND_LABELS['refine']='refinement'"
+    assert "refine-existing" in text
+    assert "get_trip" in text
+    # Prohibition discipline.
+    assert "attached" not in text.lower() or "can't" in text.lower()
+
+
+def test_source_active_job_handles_unknown_kind_with_generic_label() -> None:
+    """Defensive — if backend ships a new JobKind we don't know yet,
+    the formatter degrades to a generic label rather than crashing.
+    Mirrors test_alternative_active_job_handles_unknown_kind.
+    """
+    from trip_mcp.tools._responses import format_source_active_job
+
+    text = format_source_active_job(active_job_kind="newkind", active_job_id="x")
+    assert "background" in text.lower() or "newkind" in text.lower()
+
+
+def test_explain_with_rationale_renders_venue_block_type_rationale_sources() -> None:
+    from trip_mcp.tools._responses import format_explain_with_rationale
+
+    sources = [
+        {
+            "url": "https://reddit.com/r/IndiaTravel/anjuna",
+            "excerpt": "Locals say Anjuna is the best for sunsets",
+            "confidence_score": 0.85,
+        },
+        {
+            "url": "https://blog.example.com/goa",
+            "excerpt": "Avoid Calangute, hit Anjuna for sunset",
+            "confidence_score": 0.7,
+        },
+    ]
+    text = format_explain_with_rationale(
+        venue_name="Anjuna Beach",
+        block_type="venue",
+        rationale="Goa's most iconic sunset beach.",
+        sources=sources,
+        user_source_matches=[],
+    )
+
+    assert "Anjuna Beach" in text
+    assert "venue" in text  # block_type surfaces
+    assert "Goa's most iconic sunset beach." in text
+    # Both source URLs render.
+    assert "https://reddit.com/r/IndiaTravel/anjuna" in text
+    assert "https://blog.example.com/goa" in text
+    # Confidence shown somehow.
+    assert "0.85" in text or "85" in text
+    # No formatter-level prohibition on superlatives here: the formatter
+    # renders rationale + excerpts verbatim, and external strings may
+    # contain "best"/"perfect". The "don't synthesize" discipline lives
+    # at the §4.8 description level (where it's enforceable), not at
+    # the formatter (which has no way to know if an external string is
+    # the crew's words or its own).
+
+
+def test_explain_with_gap_uses_literal_qek_message_for_lockstep_with_description() -> None:
+    """The single most load-bearing formatter test in this slice.
+
+    §4.8 description tells the LLM: "When you see that gap message, DO NOT
+    synthesize a plausible rationale". For that instruction to be
+    actionable, the literal "rationale wasn't captured" wording must
+    appear in the tool output the LLM reads. If the formatter wording
+    drifts, the description's "when you see" guidance points at nothing.
+    """
+    from trip_mcp.tools._responses import format_explain_with_gap
+
+    sources = [
+        {
+            "url": "https://reddit.com/r/IndiaTravel/anjuna",
+            "excerpt": "Locals say Anjuna is the best",
+            "confidence_score": 0.85,
+        },
+    ]
+    text = format_explain_with_gap(
+        venue_name="Anjuna Beach",
+        block_type="venue",
+        sources=sources,
+        user_source_matches=[],
+    )
+
+    # Lockstep literal — §4.8 description matches this verbatim.
+    assert "rationale wasn't captured" in text
+    # Surfaces qek as the known limitation pointer.
+    assert "qek" in text.lower()
+    # Sources still render even on gap path.
+    assert "https://reddit.com/r/IndiaTravel/anjuna" in text
+    # Block metadata still surfaces.
+    assert "Anjuna Beach" in text
+
+
+def test_explain_block_not_found_routes_to_get_trip() -> None:
+    """Parallel to format_alternative_block_not_found from slice 3.4a —
+    distinct from trip-not-found because the trip exists.
+    """
+    from trip_mcp.tools._responses import format_explain_block_not_found
+
+    block_id = uuid.uuid4()
+    text = format_explain_block_not_found(trip_id=_TRIP_ID, block_id=block_id)
+    assert str(_TRIP_ID) in text
+    assert str(block_id) in text
+    assert "get_trip" in text
+    assert "block" in text.lower()

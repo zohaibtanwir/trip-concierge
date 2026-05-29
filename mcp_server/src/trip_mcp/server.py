@@ -31,7 +31,9 @@ import mcp.types as types
 from mcp.server import Server
 from trip_agents.schemas import (
     AddConstraintInput,
+    AddSourceInput,
     CreateTripInput,
+    ExplainRecommendationInput,
     FindAlternativeInput,
     GetTripInput,
     RefineTripInput,
@@ -40,7 +42,9 @@ from trip_agents.schemas import (
 
 from trip_mcp.config import backend_url
 from trip_mcp.tools import add_constraint as add_constraint_tool
+from trip_mcp.tools import add_source as add_source_tool
 from trip_mcp.tools import create_trip as create_trip_tool
+from trip_mcp.tools import explain_recommendation as explain_recommendation_tool
 from trip_mcp.tools import find_alternative as find_alternative_tool
 from trip_mcp.tools import get_trip as get_trip_tool
 from trip_mcp.tools import refine_trip as refine_trip_tool
@@ -109,6 +113,16 @@ async def list_tools() -> list[types.Tool]:
             description=find_alternative_tool.DESCRIPTION,
             inputSchema=FindAlternativeInput.model_json_schema(),
         ),
+        types.Tool(
+            name="add_source",
+            description=add_source_tool.DESCRIPTION,
+            inputSchema=AddSourceInput.model_json_schema(),
+        ),
+        types.Tool(
+            name="explain_recommendation",
+            description=explain_recommendation_tool.DESCRIPTION,
+            inputSchema=ExplainRecommendationInput.model_json_schema(),
+        ),
     ]
 
 
@@ -145,6 +159,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             trip_id=uuid.UUID(arguments["trip_id"]),
             block_id=uuid.UUID(arguments["block_id"]),
             reason=arguments.get("reason"),
+        )
+        return [types.TextContent(type="text", text=text)]
+    if name == "add_source":
+        text = await add_source_tool.add_source(
+            trip_id=uuid.UUID(arguments["trip_id"]),
+            url=arguments.get("url"),
+            text=arguments.get("text"),
+        )
+        return [types.TextContent(type="text", text=text)]
+    if name == "explain_recommendation":
+        text = await explain_recommendation_tool.explain_recommendation(
+            trip_id=uuid.UUID(arguments["trip_id"]),
+            block_id=uuid.UUID(arguments["block_id"]),
         )
         return [types.TextContent(type="text", text=text)]
     raise ValueError(f"unknown tool: {name}")

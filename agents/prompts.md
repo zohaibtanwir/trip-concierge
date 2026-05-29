@@ -639,23 +639,62 @@ Timing and what to say to the user:
 
 ```python
 description = """
-Use this tool when the user pastes or references external research they want the
-planner to incorporate. Examples:
-- a Reddit thread URL
-- a YouTube travel vlog link
-- "my friend texted me these recommendations: ..."
+**This is the user-research tool. When a user shares a URL or pastes text
+they want the planner to use — call this tool.** Do not summarize the
+research conversationally and forget it; this tool persists the content
+to the trip so the Researcher agent uses it on the next refine.
+
+Required: trip_id and ONE of {url, text}. Pass `url` when the user shares
+a link; pass `text` when the user pastes raw content (e.g., "my friend
+texted me these recommendations: ..."). Do not pass both.
+
+Call this proactively when the user shares any of:
+- a Reddit thread URL (e.g., r/IndiaTravel post)
+- a blog/article URL (Substack, Medium, personal travel blog)
+- a YouTube travel vlog URL (we store the URL; the planner sees the
+  link in user_sources at refine time)
 - a Google Maps saved list URL
-- a TripAdvisor article
+- a TripAdvisor article or list URL
+- raw pasted text the user describes as recommendations / research /
+  "what my friend said"
 
-The Researcher agent will prioritize venues mentioned in these sources on the next
-plan refinement. Venues from user sources are tagged in the UI so the user sees
-their input was used.
+Better to over-call than under-call. If the user shares two URLs in one
+turn, call this tool twice (once per URL).
 
-Call this proactively when the user shares any URL or block of text that looks
-like travel research. Better to over-call than under-call.
+DO NOT call this for booking confirmations, hotel emails, flight
+itineraries, or transactional content — those don't help the planner
+make recommendations.
 
-DO NOT call this for booking confirmations, hotel emails, or transactional content
-— those don't help the planner.
+DO NOT call this if the user is just asking a question that references
+a URL (e.g., "is this restaurant any good? <link>"). That's a
+conversational question; the URL isn't research the user wants stored.
+
+DO NOT call this for the URL of a Block already in the user's plan —
+that's a citation, already stored as part of the trip.
+
+Failure modes you should expect (the tool will tell you plainly which):
+- The URL might be unreachable, paywalled, blocked, or return an error
+  page. "Couldn't fetch the URL." DO NOT retry automatically; offer
+  to take pasted text instead.
+- The URL host may be denied (private IPs, localhost, cloud metadata
+  endpoints). "Denied host for security reasons." Offer pasted text.
+- The content may be the wrong format (image, video, PDF). "I can read
+  HTML, plain text, or JSON — not <type>." Offer pasted text.
+- The content may be too large (>2MB). "Too large." Offer a shorter
+  excerpt.
+- A planning job (refine, regenerate_day, add_constraint) may be in
+  progress. "Can't add a source while a <kind> job is running." Tell
+  the user to wait and check via get_trip.
+
+Timing and what to say to the user:
+- URL fetch returns in 2-5 seconds typically. Text passthrough returns
+  in under 1 second.
+- On success, tell the user the research was attached and will be
+  used on the next refinement. Offer refine_trip if the user wants
+  to apply the new research immediately.
+- DO NOT claim the planner "has read" or "is using" the research
+  until refine_trip runs. The content is stored for the NEXT
+  refinement, not the current trip state.
 """
 ```
 
@@ -714,17 +753,56 @@ Timing and what to say to the user:
 
 ```python
 description = """
-Use this tool when the user asks why a specific venue is in their plan.
-Examples:
+**This is the why-this-venue tool. When a user asks why a specific block
+is in their trip — call this tool.** Do not synthesize an answer
+conversationally from the venue name; this tool returns the actual
+stored rationale + source URLs the Researcher used, so the user can
+verify the recommendation themselves.
+
+Required: trip_id and block_id. block_id MUST be a real UUID from
+get_trip — DO NOT synthesize one from context. (Same prohibition as
+find_alternative; layered defense.)
+
+Call this for instructions like:
 - "why this restaurant?"
 - "what's the source for the Day 2 museum?"
-- "is this place actually good?"
+- "where did this recommendation come from?"
+- "is this place actually good?" (the user wants the evidence)
 
-Returns the source URLs, the agent's rationale, and the confidence score. Use the
-output to give the user a transparent answer they can verify themselves.
+Call this proactively when the user seems skeptical of a specific
+recommendation, even if they don't explicitly ask "why". Surfacing
+sources is the trust-building move.
 
-Call this proactively when the user seems skeptical of a specific recommendation,
-even if they don't explicitly ask "why".
+DO NOT use this for general venue questions ("is sushi popular in
+Tokyo?") — that's a web_search question, not a stored-rationale
+question.
+
+DO NOT use this for explanations of the trip as a whole — there's
+no per-trip rationale, only per-block. If the user asks "why this
+whole trip?", point them at individual blocks they want to dig into.
+
+CRITICAL — gap-surfacing discipline:
+
+The backend returns the rationale as JSON null when no rationale was
+captured for this block — usually because the crew's step_callback
+didn't fire during planning (tracking ticket trip-concierge-qek).
+The tool surfaces this honestly with text like "The Researcher's
+per-block rationale wasn't captured for this venue — here are the
+sources it used."
+
+When you see that gap message, DO NOT synthesize a plausible rationale
+from the venue name. Tell the user honestly. The user trusts the
+product more when we name the gap than when we paper over it.
+
+Same discipline as get_trip's "failed" state messaging from slice 3.3:
+honest broken beats invisible broken.
+
+Timing and what to say to the user:
+- The tool returns in under 1 second (pure DB read; no LLM call).
+- Present the rationale (or the gap message), then list the sources.
+- If a source URL matches a research item the user added via
+  add_source, surface that provenance: "this came from your Reddit
+  thread."
 """
 ```
 

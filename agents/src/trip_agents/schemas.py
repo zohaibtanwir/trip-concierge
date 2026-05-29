@@ -319,6 +319,71 @@ class FindAlternativeInput(BaseModel):
     )
 
 
+class AddSourceInput(BaseModel):
+    """Input for the add_source MCP tool — slice 3.4b commit 4.
+
+    Mirrors backend AddSourceRequest (app/routes/sources.py). Exactly
+    one of {url, text} is required; the backend's model_validator
+    enforces this at the HTTP layer (422 on neither/both). The MCP-side
+    schema permits both as Optional so the LLM can pick either path;
+    the backend rejects misuse cleanly.
+
+    URL verbatim discipline: instruct the LLM not to normalize/shorten
+    URLs so the v1.0b dedup-by-URL invariant (tracking ticket pcm) is
+    preserved when the consumer ships.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(description="The trip's UUID.")
+    url: str | None = Field(
+        default=None,
+        max_length=2000,
+        description=(
+            "The URL the user shared (Reddit thread, blog post, YouTube "
+            "video, Google Maps list, etc.). Required if `text` is not "
+            "provided; mutually exclusive with `text`. Pass the URL "
+            "verbatim — do not normalize, shorten, or canonicalize "
+            "(query strings like utm_source matter for some sites)."
+        ),
+    )
+    text: str | None = Field(
+        default=None,
+        max_length=200_000,
+        description=(
+            "Raw text the user pasted (e.g., 'my friend texted me these "
+            "recommendations: ...'). Required if `url` is not provided; "
+            "mutually exclusive with `url`. Pass the text verbatim — do "
+            "not paraphrase or summarize. The Researcher reads it as-is."
+        ),
+    )
+
+
+class ExplainRecommendationInput(BaseModel):
+    """Input for the explain_recommendation MCP tool — slice 3.4b commit 4.
+
+    block_id carries the same MUST/DO-NOT-synthesize prohibition as
+    FindAlternativeInput.block_id from slice 3.4a — layered defense:
+    LLM stops at the field description (cheapest layer), route 404s
+    on any UUID-shaped string that doesn't resolve to a real block on
+    this trip (belt).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(description="The trip's UUID.")
+    block_id: str = Field(
+        description=(
+            "The UUID of the block the user wants explained. MUST be a "
+            "real block_id from get_trip's output. DO NOT synthesize a "
+            "UUID-shaped string from context, prior turns, or your own "
+            "generation; if you don't have a real block_id, call "
+            "get_trip first. The backend rejects (404) any block_id "
+            "not on this trip."
+        ),
+    )
+
+
 class Alternative(BaseModel):
     """One ranked alternative venue produced by find_alternative.
 

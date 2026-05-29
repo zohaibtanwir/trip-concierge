@@ -439,3 +439,203 @@ def format_alternative_failed(*, trip_id: uuid.UUID, reason: str) -> str:
     return (
         f"I couldn't look up alternatives for trip {trip_id} — {reason}.\n\nWant me to try again?"
     )
+
+
+# ---------------------------------------------------------------------------
+# Slice 3.4b commit 4: response formatters for add_source and
+# explain_recommendation. Eight new formatters per the slice-opening
+# corpus review; format_explain_block_not_found added as the parallel
+# to format_alternative_block_not_found (slice 3.4a) when test writing
+# revealed the distinct UX branch.
+#
+# The gap-text formatter (format_explain_with_gap) carries literal
+# wording that prompts.md §4.8 references verbatim. Drift between
+# the two breaks the LLM's routing instruction ("when you see that
+# gap message, DO NOT synthesize"). Pinned by a dedicated test.
+# ---------------------------------------------------------------------------
+
+
+def format_source_attached(
+    *,
+    trip_id: uuid.UUID,
+    content_type: str,
+    char_count: int,
+) -> str:
+    """add_source success — POST /sources returned 200.
+
+    Echoes the char_count and content_type so the LLM sees what was
+    actually attached. Routes follow-up to refine_trip; explicit
+    "save it for next planning round" alternative keeps user opt-in.
+    """
+    return (
+        f"Added your research to trip {trip_id} "
+        f"(~{char_count:,} characters of {content_type}).\n"
+        f"\n"
+        f"The Researcher will use this at the next refinement. Want me "
+        f"to trigger refine_trip now, or save it for the next planning "
+        f"round?"
+    )
+
+
+def format_source_fetch_failed(*, trip_id: uuid.UUID, url: str, reason: str) -> str:
+    """502 + kind="fetch_failed" — unreachable URL, paywall, upstream
+    4xx/5xx, or timeout. Offers paste alternative, does NOT claim
+    attached.
+    """
+    return (
+        f"I couldn't fetch {url} for trip {trip_id} — {reason}.\n"
+        f"\n"
+        f"Want to paste the relevant text directly instead?"
+    )
+
+
+def format_source_denied_host(url: str) -> str:
+    """400 + kind="denied_host" — SSRF defense fired. Names the security
+    reason plainly (no euphemisms), offers paste alternative.
+    """
+    return (
+        f"I can't fetch {url} — that host is on our denied list (it "
+        f"points to a private IP, local network, or cloud metadata "
+        f"endpoint).\n"
+        f"\n"
+        f"If you want to share research, paste the text directly or "
+        f"share a different public URL."
+    )
+
+
+def format_source_too_large(*, byte_count: int) -> str:
+    """413 + kind="too_large" + byte_count. Surfaces the byte count
+    AND the 2 MB cap so the user understands the scale and offers
+    a shorter excerpt path.
+    """
+    return (
+        f"The content at that URL is too large (~{byte_count:,} bytes; "
+        f"we cap at 2 MB).\n"
+        f"\n"
+        f"Want to paste a shorter excerpt instead?"
+    )
+
+
+def format_source_unsupported_content_type(*, content_type: str) -> str:
+    """415 + kind="unsupported_content_type". Distinct UX from
+    fetch_failed because retrying won't help — only paste or a
+    different URL. The §4.6 description tells the LLM to expect
+    this branch as a distinct mode.
+    """
+    return (
+        f"I can only read HTML pages, plain text, or JSON — "
+        f"not {content_type}. Many image, video, and PDF URLs are "
+        f"saved as the file itself rather than a readable article.\n"
+        f"\n"
+        f"Want to paste a text excerpt or share a different URL?"
+    )
+
+
+def format_source_active_job(*, active_job_kind: str, active_job_id: str) -> str:
+    """409 + kind="active_job" — slice-3.3 KIND_LABELS reuse pattern
+    applied to add_source. Identical structural shape to
+    format_alternative_active_job; only the action verb differs.
+    """
+    label = _KIND_LABELS.get(active_job_kind, "background")
+    return (
+        f"I can't add a source right now — a {label} job is already "
+        f"in progress for this trip (job {active_job_id}). Ask me to "
+        f"check the trip status via get_trip; once it's done, I can "
+        f"attach the source."
+    )
+
+
+def _format_sources_block(sources: list[dict[str, Any]]) -> str:
+    """Render the numbered sources section used by both explain
+    formatters. Surfaces URL on its own line + excerpt + confidence
+    (slice-3.3 precedent for link-rendering in Claude Desktop).
+    """
+    if not sources:
+        return "(no sources recorded for this venue)"
+    lines: list[str] = []
+    for idx, src in enumerate(sources, start=1):
+        url = src.get("url", "(no URL)")
+        excerpt = src.get("excerpt", "")
+        conf = src.get("confidence_score")
+        lines.append(f"{idx}. {url}")
+        if conf is not None:
+            lines.append(f"   confidence: {conf}")
+        if excerpt:
+            lines.append(f"   {excerpt}")
+    return "\n".join(lines)
+
+
+def _format_user_source_provenance(user_source_matches: list[dict[str, str]]) -> str:
+    """Render the provenance line surfaced when a block's source URL
+    matches a UserSource the user added. Empty list → empty string
+    (caller suppresses the line).
+    """
+    if not user_source_matches:
+        return ""
+    first = user_source_matches[0]
+    return f"This venue came from your own research at {first.get('url', '')}."
+
+
+def format_explain_with_rationale(
+    *,
+    venue_name: str,
+    block_type: str,
+    rationale: str,
+    sources: list[dict[str, Any]],
+    user_source_matches: list[dict[str, str]],
+) -> str:
+    """GET /explain returned 200 with rationale (str). Happy path."""
+    provenance = _format_user_source_provenance(user_source_matches)
+    provenance_line = f"\n\n{provenance}" if provenance else ""
+    return (
+        f"{venue_name} ({block_type})\n"
+        f"\n"
+        f"Why it's in your trip: {rationale}\n"
+        f"\n"
+        f"Sources:\n"
+        f"{_format_sources_block(sources)}"
+        f"{provenance_line}"
+    )
+
+
+def format_explain_with_gap(
+    *,
+    venue_name: str,
+    block_type: str,
+    sources: list[dict[str, Any]],
+    user_source_matches: list[dict[str, str]],
+) -> str:
+    """GET /explain returned 200 with rationale=null (gap path).
+
+    The literal "rationale wasn't captured" wording is referenced by
+    prompts.md §4.8 — the LLM's instruction "when you see that gap
+    message, DO NOT synthesize" needs to match what it actually sees.
+    Pinned by test_explain_with_gap_uses_literal_qek_message.
+    """
+    provenance = _format_user_source_provenance(user_source_matches)
+    provenance_line = f"\n\n{provenance}" if provenance else ""
+    return (
+        f"{venue_name} ({block_type})\n"
+        f"\n"
+        f"The Researcher's per-block rationale wasn't captured for "
+        f"this venue (known limitation, tracking ticket "
+        f"trip-concierge-qek). Here are the sources it used — you "
+        f"can verify the choice yourself.\n"
+        f"\n"
+        f"Sources:\n"
+        f"{_format_sources_block(sources)}"
+        f"{provenance_line}"
+    )
+
+
+def format_explain_block_not_found(*, trip_id: uuid.UUID, block_id: uuid.UUID) -> str:
+    """404 on block-lookup. Distinct from format_trip_not_found
+    because the trip exists; only the block doesn't. Parallel to
+    format_alternative_block_not_found from slice 3.4a.
+    """
+    return (
+        f"I couldn't find block {block_id} in trip {trip_id} — the "
+        f"block_id may be wrong or the block may have been removed. "
+        f"Call get_trip to see the current blocks, then try again "
+        f"with a real block_id."
+    )
