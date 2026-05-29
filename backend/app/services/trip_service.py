@@ -15,6 +15,7 @@ from app.models.block import Block
 from app.models.day import Day
 from app.models.source import Source
 from app.models.trip import Trip
+from app.models.user_source import UserSource
 from app.schemas.trip import TripCreate
 
 
@@ -240,3 +241,38 @@ def append_constraint(
     db.commit()
     db.refresh(trip)
     return trip
+
+
+def append_user_source(
+    db: Session,
+    *,
+    trip_id: uuid.UUID,
+    url: str | None,
+    raw_text: str,
+    content_type: str,
+) -> UserSource:
+    """Persist one row to user_sources for the given trip.
+
+    No dedup. v1.0a treats each call as intentional — a user pasting
+    the same URL twice may be re-fetching after content changed.
+    Symmetric with append_constraint's ValueError-on-missing-trip
+    discipline.
+
+    The route layer translates ValueError → 404. Programmatic callers
+    that skip the pre-check get a loud failure rather than a silent
+    orphan write.
+    """
+    trip = db.get(Trip, trip_id)
+    if trip is None:
+        raise ValueError(f"trip {trip_id} not found")
+
+    row = UserSource(
+        trip_id=trip_id,
+        url=url,
+        raw_text=raw_text,
+        content_type=content_type,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
