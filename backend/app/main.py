@@ -9,9 +9,11 @@ from app.routes import (
     auth,
     constraints,
     explain,
+    export,
     plan,
     refine,
     regenerate,
+    shared,
     sources,
     trips,
 )
@@ -35,6 +37,8 @@ app.include_router(constraints.router)
 app.include_router(alternative.router)
 app.include_router(sources.router)
 app.include_router(explain.router)
+app.include_router(shared.router)
+app.include_router(export.router)
 app.include_router(auth.router)
 
 

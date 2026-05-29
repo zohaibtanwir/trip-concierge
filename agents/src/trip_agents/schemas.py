@@ -319,6 +319,77 @@ class FindAlternativeInput(BaseModel):
     )
 
 
+class ShareTripInput(BaseModel):
+    """Input for the share_trip MCP tool — slice 3.5.
+
+    Structurally novel in the corpus: share_trip has no backend call
+    (per the slice opening). Both `state` and `destination` are LLM
+    hand-offs of context from prior turns (get_trip / create_trip) —
+    the LLM-as-orchestrator pattern that's worked across slices
+    3.3/3.4a/3.4b.
+
+    state → routes to format_share_not_ready vs format_share_succeeded
+    destination → renders into the share message when provided; falls
+    back to a generic "your trip" when None (honest-broken pattern at
+    the formatter layer — present when we have data, absent gracefully
+    when we don't).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(description="The trip's UUID.")
+    state: str | None = Field(
+        default=None,
+        description=(
+            "Optional. The trip state from a recent get_trip call (one "
+            "of 'done', 'queued', 'running', 'failed', 'cancelled', "
+            "'never_planned'). If 'done'/'succeeded' OR unset, the "
+            "tool returns the share URL. Otherwise it returns a "
+            "clarification message that the trip isn't ready to "
+            "share yet. Leave unset if you're confident the trip is "
+            "ready; OR call get_trip first and pass the state value "
+            "you read."
+        ),
+    )
+    destination: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "Optional. The trip's destination (city or region) as the "
+            "user discussed it. Pass the value you remember from prior "
+            "get_trip or create_trip calls — improves the share "
+            "message UX. Leave unset if you don't have it; the tool "
+            "will render a generic message."
+        ),
+    )
+
+
+class ExportTripInput(BaseModel):
+    """Input for the export_trip MCP tool — slice 3.5.
+
+    Mirrors the backend's Literal[\"json\",\"markdown\"] format
+    constraint. The backend returns 422 on any other value (FastAPI
+    auto-validation per slice-3.4a discipline discussion: single
+    rare error path doesn't justify kind-structured-body).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trip_id: str = Field(description="The trip's UUID.")
+    format: str = Field(
+        default="markdown",
+        description=(
+            "Export format. One of 'json' or 'markdown'. Default is "
+            "'markdown' because that's the format that pastes cleanly "
+            "into WhatsApp / Notion / Apple Notes / any text app — the "
+            "common case. Use 'json' when the user explicitly wants "
+            "structured data for re-import or a programmatic pipeline. "
+            "PDF + whatsapp + google_maps formats are deferred to "
+            "v1.0b (trip-concierge-de6 + trip-concierge-dzg)."
+        ),
+    )
+
+
 class AddSourceInput(BaseModel):
     """Input for the add_source MCP tool — slice 3.4b commit 4.
 
