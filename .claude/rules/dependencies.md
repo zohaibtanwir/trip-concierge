@@ -75,6 +75,25 @@ Any PR that changes a lockfile is reviewed by a second person before merge, incl
 
 In production and CI, log all egress. Alert on connections to non-allowlisted destinations. Block IOCs from current threat advisories. The MCP server and FastAPI service have allowlists for outbound connections (LLM provider, search APIs, telemetry).
 
+#### Outbound URL fetch — add_source
+
+The `add_source` MCP tool (slice 3.4b) intentionally expands the egress surface to "any URL the user pastes into Claude Desktop." This is the only outbound destination in the project that isn't on a pre-configured allowlist. The expansion is contained by the 6-defense stack in `backend/app/services/source_ingestion.py`:
+
+1. **Scheme allowlist** — `http://` and `https://` only. `file://`, `gopher://`, `ftp://` rejected at URL parse.
+2. **Denied-host canonical list** — `metadata.google.internal`, `169.254.169.254` (AWS/Azure metadata), `localhost`, `0.0.0.0` rejected at hostname compare, before DNS.
+3. **DNS resolve + IP-range validation** — resolved IP must be public (`is_global`). Rejects private (`10/8`, `172.16/12`, `192.168/16`), loopback, link-local, multicast.
+4. **10-second total timeout** — `httpx.AsyncClient(timeout=10.0)`.
+5. **Content-Type filter** — `text/html`, `text/plain`, `application/json` only. Binary streams rejected at header time before downloading the body.
+6. **2 MB streaming size limit** — `iter_bytes(chunk_size=8192)` with early abort once `MAX_BYTES = 2_000_000` is exceeded.
+
+All six fire as distinct typed exceptions (`DeniedHostError`, `FetchFailedError`, `ContentTooLargeError`, `UnsupportedContentTypeError`) so the route surfaces the right user-facing message per failure mode — no generic "fetch failed."
+
+**Known limitation**: defense 3 validates the IP *before* httpx connects, but httpx re-resolves the hostname before the actual connection. A DNS rebinding attacker controlling DNS for the user's network could return a public IP on the validation call and a private IP on the connection call. Robust defense requires pinning the validated IP in the httpx transport. Tracked as ticket `trip-concierge-4vi` (P2). v1.0a accepts the residual risk because DNS rebinding requires a coordinated attacker controlling the user's local DNS resolver — a significantly higher bar than the basic SSRF this stack defends against.
+
+**Logging**: source_ingestion logs `url_ingest.start` / `url_ingest.success` / `url_ingest.failure` with the URL host (NOT the full URL — query strings may carry tokens) and the exception class on failure.
+
+**Audit trigger**: if `add_source`'s denial rate spikes, check `_DENIED_HOSTS` — a new cloud metadata endpoint may have launched that needs adding.
+
 ### 9. Secret rotation
 
 - Static tokens rotated quarterly, even without incident.
