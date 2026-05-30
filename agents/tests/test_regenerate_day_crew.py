@@ -14,7 +14,7 @@ Key differences from refine_crew (Process.hierarchical, 4 agents):
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from crewai import Process
 
@@ -53,7 +53,7 @@ def test_regenerate_day_uses_sequential_process() -> None:
     def fake_crew_init(*_args: Any, **kwargs: Any) -> MagicMock:
         captured.update(kwargs)
         instance = MagicMock()
-        instance.kickoff.return_value = _day_result()
+        instance.kickoff_async = AsyncMock(return_value=_day_result())
         return instance
 
     with patch.object(crew_mod, "Crew", side_effect=fake_crew_init):
@@ -79,7 +79,7 @@ def test_regenerate_day_excludes_budget_auditor() -> None:
     def fake_crew_init(*_args: Any, **kwargs: Any) -> MagicMock:
         captured.update(kwargs)
         instance = MagicMock()
-        instance.kickoff.return_value = _day_result()
+        instance.kickoff_async = AsyncMock(return_value=_day_result())
         return instance
 
     with patch.object(crew_mod, "Crew", side_effect=fake_crew_init):
@@ -103,7 +103,7 @@ def test_regenerate_day_returns_day_dict() -> None:
     unlocked positions. Worker splices locked blocks back in.
     """
     with patch.object(crew_mod, "Crew") as mock_crew_cls:
-        mock_crew_cls.return_value.kickoff.return_value = _day_result()
+        mock_crew_cls.return_value.kickoff_async = AsyncMock(return_value=_day_result())
         out = crew_mod.regenerate_day(
             trip_context=_trip_context(),
             target_day=_target_day(),

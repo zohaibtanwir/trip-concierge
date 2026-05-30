@@ -19,6 +19,7 @@ the orchestrator deciding whether to run another pass. This:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -81,6 +82,70 @@ DEFAULT_INPUTS = {
 }
 
 
+def _kickoff_with_loop(crew: Crew, inputs: dict[str, Any]) -> Any:
+    """Wrap crew.kickoff() with a worker-thread event loop.
+
+    Slice dzc-b-fix (2026-05-30). CrewAI 1.14.5's `crewai/flow/flow.py:2120`
+    calls `asyncio.get_running_loop()` when a task uses `output_pydantic`.
+    Inside `asyncio.to_thread` (used by `backend/app/worker.py` for plan/
+    refine/regenerate_day and by `backend/app/routes/alternative.py` via
+    `asyncio.wait_for(asyncio.to_thread(...), timeout=90.0)` for
+    find_alternative), the worker thread has no running event loop and
+    `get_running_loop()` raises `RuntimeError: no running event loop`.
+
+    The error propagates through CrewAI's internal Flow listener pattern,
+    surfaces as the LLM call returning empty structured args (`{}`),
+    which downstream produces `TripPlan({}) → ValidationError →
+    FatalJobError`. Same single bug caused both `trip-concierge-dzc`
+    (CrewAI empty output) and `trip-concierge-qek` (step_callback never
+    fires) — collapsed into ONE root cause after the dzc-a + qek-a
+    observability slices made the diagnostic data visible.
+
+    This helper provides a fresh event loop in the worker thread via
+    `asyncio.new_event_loop()` + `loop.run_until_complete(_kickoff_in_loop())`,
+    so CrewAI's `get_running_loop()` returns the new loop. The arq main
+    loop (captured in qek-a's `_make_callbacks` closure for
+    `run_coroutine_threadsafe`) lives on a different thread, so there's
+    no interference: cross-thread bridges schedule on `arq_loop`
+    explicitly, intra-thread CrewAI internals use the new loop.
+
+    Inside `_kickoff_in_loop`, we call `await crew.kickoff_async(...)`,
+    NOT `crew.kickoff(...)`. CrewAI 1.14.5 gives us two clearly-designed
+    contract paths:
+      • sync world (no event loop in thread) → `crew.kickoff()`
+      • async world (event loop running)     → `await crew.kickoff_async()`
+    Calling sync `kickoff` from inside our new running loop raises
+    `RuntimeError: Agent execution was invoked synchronously from within
+    a running event loop. Use kickoff_async()` (CrewAI's explicit guard
+    at `crewai/agent/core.py:866`). Our worker is async-from-async (arq
+    loop + `asyncio.to_thread` creating a sync-looking context that needs
+    async internally), so kickoff_async is the contract path. The initial
+    dzc-b-fix attempt (Coorg validation 2026-05-30, JobRun
+    365177d6-6eac-49c2-aba8-660a7f529072) used sync kickoff and hit this
+    guard at 0.19s; the amended fix uses kickoff_async and proceeds.
+
+    Applied at all 5 kickoff sites in this module (run, _run_audit_pass,
+    refine, regenerate_day, find_alternative). All 5 use crews whose
+    final task has `output_pydantic` set, so all 5 route through Flow.
+
+    Pinned by tests in agents/tests/test_crew_asyncio_isolation.py.
+    DO NOT remove this wrapper as "weird unnecessary indirection." The
+    regression-prevention test will keep this honest; the load-bearing
+    reason this exists is in the test docstring and in
+    `experiments/01-langfuse.md` "dzc/qek root cause" observation.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+
+        async def _kickoff_in_loop() -> Any:
+            return await crew.kickoff_async(inputs=inputs)
+
+        return loop.run_until_complete(_kickoff_in_loop())
+    finally:
+        loop.close()
+
+
 def _build_crew(
     step_callback: Callable[[Any], None] | None = None,
     task_callback: Callable[[Any], None] | None = None,
@@ -137,10 +202,13 @@ def run(
     logger.info("crew.run.start", extra={"destination": destination})
 
     # 1. Main 3-agent crew produces a TripPlan.
-    crew_result = _build_crew(
-        step_callback=step_callback,
-        task_callback=task_callback,
-    ).kickoff(inputs=inputs)
+    crew_result = _kickoff_with_loop(
+        _build_crew(
+            step_callback=step_callback,
+            task_callback=task_callback,
+        ),
+        inputs,
+    )
     plan = _extract_trip_plan(crew_result)
 
     # 2. Audit loop owns retry policy.
@@ -250,7 +318,7 @@ def _run_audit_pass(
         "pass_num": pass_num,
     }
     logger.info("audit.pass.start", extra={"pass_num": pass_num})
-    result = crew.kickoff(inputs=pass_inputs)
+    result = _kickoff_with_loop(crew, pass_inputs)
     if hasattr(result, "pydantic") and isinstance(result.pydantic, AuditedPlan):
         return result.pydantic
     # Fallback if structured output was not produced.
@@ -309,7 +377,10 @@ def refine(
         "refinement_description": refinement_description,
     }
     logger.info("crew.refine.start", extra={"destination": trip_state.get("destination")})
-    crew_result = _build_refine_crew(step_callback=step_callback).kickoff(inputs=inputs)
+    crew_result = _kickoff_with_loop(
+        _build_refine_crew(step_callback=step_callback),
+        inputs,
+    )
     audited = _extract_audited_plan(crew_result)
     output: dict[str, Any] = audited.model_dump()
     logger.info(
@@ -357,7 +428,10 @@ def regenerate_day(
         "hint": hint or "no specific hint",
     }
     logger.info("crew.regenerate_day.start", extra={"day_number": target_day.get("day_number")})
-    crew_result = _build_regenerate_day_crew(step_callback=step_callback).kickoff(inputs=inputs)
+    crew_result = _kickoff_with_loop(
+        _build_regenerate_day_crew(step_callback=step_callback),
+        inputs,
+    )
     day = _extract_day(crew_result)
     output: dict[str, Any] = day.model_dump()
     logger.info(
@@ -545,7 +619,10 @@ def find_alternative(
         "crew.find_alternative.start",
         extra={"destination": inputs["destination"], "block_type": inputs["block_type"]},
     )
-    crew_result = _build_find_alternative_crew(step_callback=step_callback).kickoff(inputs=inputs)
+    crew_result = _kickoff_with_loop(
+        _build_find_alternative_crew(step_callback=step_callback),
+        inputs,
+    )
     alternatives_list = _extract_alternatives_list(crew_result)
     output: dict[str, Any] = alternatives_list.model_dump()
     logger.info(
