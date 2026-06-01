@@ -40,6 +40,7 @@ app.include_router(explain.router)
 app.include_router(shared.router)
 app.include_router(export.router)
 app.include_router(auth.router)
+app.include_router(auth.internal_router)
 
 
 @app.get("/health")

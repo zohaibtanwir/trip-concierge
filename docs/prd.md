@@ -141,7 +141,8 @@ The 4-agent crew takes ~9 minutes per kickoff. Production HTTP proxies (Fly.io d
 
 ```
 User
-  id, email, name, preferences (JSONB), created_at
+  id, email, email_verified (TIMESTAMPTZ), image (TEXT),
+  name, preferences (JSONB), created_at
 
 Trip
   id, user_id, status (draft|active|completed), destination,

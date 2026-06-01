@@ -8,9 +8,16 @@ with TC_MCP_TOKEN_SECRET.
 # v2.0 followup: add mcp_tokens table with token_hash + revoked_at,
 # trade one Redis lookup per call for per-token revocation.
 
-Issuance is dev-only in slice 3.1 (via the tc-issue-mcp-token CLI).
-Slice 4.1 adds the production magic-link flow that calls into
-issue_token from a route handler.
+Production entry points (both call issue_token below):
+- Slice 4.1 (mvs) — PWA-side. Auth.js signIn callback POSTs to
+  /internal/auth/mint-mcp-token in app.routes.auth after a successful
+  magic-link or Google OAuth sign-in.
+- Slice 4.1b (trip-concierge-0h0) — MCP-side challenge. User without
+  a token triggers a tool call; MCP server returns a magic-link URL;
+  backend's /auth/mcp/redeem mints the token after the user clicks.
+
+Plus the dev CLI (tc-issue-mcp-token) from slice 3.1 — see
+app.cli.issue_mcp_token. CLI is for local dev + ops repair only.
 """
 
 from __future__ import annotations
