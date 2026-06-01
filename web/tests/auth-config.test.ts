@@ -27,22 +27,26 @@ describe("authConfig", () => {
     expect(authConfig.session?.strategy).toBe("jwt");
   });
 
-  it("registers exactly two providers (Resend + Google)", () => {
+  it("registers Google in the Edge-safe config (Resend lives in auth.ts only)", () => {
+    // Resend is NOT in authConfig — it's added in auth.ts alongside
+    // the PostgresAdapter because Auth.js's assertConfig() rejects an
+    // Email provider without an adapter. Keeping Resend out of
+    // authConfig is what makes middleware's NextAuth(authConfig)
+    // initialize cleanly in the Edge runtime.
     const providers = authConfig.providers ?? [];
-    expect(providers).toHaveLength(2);
+    expect(providers).toHaveLength(1);
 
     const providerIds = providers.map((p) => {
-      // Auth.js v5 normalises provider into an object with .id; if it's
-      // still a config function, call it and read .id.
       const resolved = typeof p === "function" ? p({}) : p;
       return resolved.id;
     });
-    expect(providerIds.sort()).toEqual(["google", "resend"]);
+    expect(providerIds).toEqual(["google"]);
   });
 
-  it("wires the PostgreSQL adapter", () => {
-    expect(authConfig.adapter).toBeDefined();
-  });
+  // The adapter is composed in auth.ts (NextAuth({...authConfig, adapter})),
+  // not on the authConfig object itself — the Edge-safe split per
+  // edge-middleware-fix. Adapter behavior is pinned by the integration
+  // test in auth-adapter-write.test.ts.
 
   it("defines a signIn callback that fires the MCP-mint side effect", () => {
     expect(authConfig.callbacks?.signIn).toBeDefined();

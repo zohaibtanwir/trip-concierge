@@ -1,26 +1,38 @@
 /**
- * Auth.js v5 config — slice 4.1 (mvs).
+ * Auth.js v5 — EDGE-SAFE config slice (slice 4.1 mvs + edge-middleware-fix).
  *
- * Split out from `auth.ts` per the Auth.js Edge-Runtime guidance: the
- * config object is pure data + functions, importable from Edge code
- * (middleware) and from tests without pulling in Next.js's server
- * APIs. `auth.ts` calls NextAuth(authConfig) — that import path
- * pulls in next/server.
+ * This module MUST stay Edge-Runtime-compatible. Next.js middleware
+ * imports this file, and middleware runs in the Edge Runtime — which
+ * forbids Node.js APIs (`crypto`, `net`, `tls`, etc.). That means:
  *
- * Two providers (Resend email magic-link + Google OAuth), JWT
- * session strategy, PostgreSQL adapter. See the alembic 0008
- * migration for the schema and `web/auth.ts` module docstring for
- * the two-writers pattern.
+ *   - NO `pg` import here (uses Node `crypto` internally).
+ *   - NO `PostgresAdapter` import here (drags in `pg`).
+ *   - NO `new Pool(...)` here.
+ *
+ * The adapter + Pool live in `auth.ts`, which is imported only from
+ * Node runtime paths (route handlers, server components). Tests can
+ * still import `authConfig` and `sendMagicLink` from here safely.
+ *
+ * Background: the original commit-2 split co-located the adapter in
+ * this file under the assumption that "edge-safe = no next/server".
+ * Wrong — Edge also forbids Node APIs. Post-merge smoke test caught
+ * the gap (middleware compile pulled in `pg` → Edge error → 500 on
+ * every protected route). See bd reopen on trip-concierge-mvs.
  */
 
-import PostgresAdapter from "@auth/pg-adapter";
 import type { NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
-import Resend from "next-auth/providers/resend";
-import { Pool } from "pg";
 
 import { mintMcpToken } from "@/lib/backend";
 import { env } from "@/lib/env";
+
+// Resend (email magic-link) provider is intentionally NOT in this
+// file. Auth.js's assertConfig() rejects NextAuth(authConfig) when
+// an Email provider is present without an adapter — and the adapter
+// can't live here (pg → Edge crash). The Resend provider is added
+// in auth.ts alongside the PostgresAdapter so the Node-runtime path
+// gets both at once. Middleware uses this Edge-safe config which
+// has Google-only providers.
 
 interface ResendSendParams {
   identifier: string;
@@ -68,22 +80,11 @@ export async function sendMagicLink({
   }
 }
 
-// Pool construction is lazy — pg's `new Pool()` does not connect
-// until the first query. Tests that import this module don't trigger
-// any network activity.
-const pool = new Pool({ connectionString: env.DATABASE_URL });
-
 export const authConfig: NextAuthConfig = {
-  adapter: PostgresAdapter(pool),
   providers: [
     Google({
       clientId: env.GOOGLE_CLIENT_ID,
       clientSecret: env.GOOGLE_CLIENT_SECRET,
-    }),
-    Resend({
-      apiKey: env.RESEND_API_KEY,
-      from: env.RESEND_FROM_EMAIL,
-      sendVerificationRequest: sendMagicLink,
     }),
   ],
   session: { strategy: "jwt" },
@@ -95,10 +96,10 @@ export const authConfig: NextAuthConfig = {
       // includes a correlation ID so an operator investigating "I
       // can't use MCP" can match page state to the log line.
       //
-      // TODO(slice 4.x Settings/MCP): surface mint failures in the
-      // PWA Settings page so a user with a broken MCP token sees
-      // "Token unavailable — retry" rather than silent failure.
-      // Current dev fallback: tc-issue-mcp-token CLI.
+      // TODO(slice 4.x Settings/MCP / trip-concierge-vmz): surface
+      // mint failures in the PWA Settings page so a user with a
+      // broken MCP token sees "Token unavailable — retry" rather than
+      // silent failure. Current dev fallback: tc-issue-mcp-token CLI.
       if (user?.id) {
         await mintMcpToken({ userId: user.id }).catch((err) => {
           console.error("mint_mcp_token failed", {
