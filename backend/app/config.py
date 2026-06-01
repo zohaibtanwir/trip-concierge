@@ -53,6 +53,16 @@ class Settings(BaseSettings):
         validation_alias="TC_MCP_TOKEN_SECRET",
     )
 
+    # Shared secret between Next.js (web/) and FastAPI (backend/) for the
+    # PWA → backend internal-RPC mint route added in slice 4.1. Different
+    # trust root from TC_MCP_TOKEN_SECRET — compromise of this secret means
+    # an attacker who reaches the backend network can mint MCP tokens for
+    # arbitrary user_ids; rotation immediately closes the surface.
+    internal_auth_secret: str = Field(
+        default="dev-only-internal-auth-do-not-use-in-prod",
+        validation_alias="INTERNAL_AUTH_SECRET",
+    )
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias="LOG_LEVEL"
     )
