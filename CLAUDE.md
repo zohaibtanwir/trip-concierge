@@ -183,7 +183,9 @@ Defined in `.env.example`. Copy to `.env.local` (web) and `.env` (backend) befor
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | web | OAuth |
 | `BACKEND_URL` | web | Internal API base URL |
 | `TC_MCP_TOKEN_SECRET` | backend, mcp_server | MCP token signing |
+| `INTERNAL_AUTH_SECRET` | backend, web | PWA→backend mint route shared secret (slice 4.1) |
 | `RESEND_API_KEY` | web | Magic link emails |
+| `RESEND_FROM_EMAIL` | web | From-address for magic-link emails (slice 4.1) |
 
 ---
 
