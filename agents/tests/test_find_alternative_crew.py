@@ -18,7 +18,7 @@ Four load-bearing properties verified:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from crewai import Process
@@ -80,7 +80,7 @@ def test_find_alternative_uses_sequential_process_with_one_agent() -> None:
     def fake_crew_init(*_args: Any, **kwargs: Any) -> MagicMock:
         captured.update(kwargs)
         instance = MagicMock()
-        instance.kickoff.return_value = _alternatives_result()
+        instance.kickoff_async = AsyncMock(return_value=_alternatives_result())
         return instance
 
     with patch.object(crew_mod, "Crew", side_effect=fake_crew_init):
@@ -101,7 +101,7 @@ def test_find_alternative_returns_three_alternatives_dict() -> None:
     """Happy path: crew returns valid 3-item AlternativesList → function
     returns model_dump() with all three entries and required fields."""
     with patch.object(crew_mod, "Crew") as mock_crew_cls:
-        mock_crew_cls.return_value.kickoff.return_value = _alternatives_result()
+        mock_crew_cls.return_value.kickoff_async = AsyncMock(return_value=_alternatives_result())
         out = crew_mod.find_alternative(
             trip_state=_trip_state(), block=_block(), reason="restaurant closed"
         )
@@ -131,7 +131,7 @@ def test_find_alternative_raises_when_crew_returns_wrong_item_count() -> None:
     """
     bad_result = _alternatives_result(alternatives=[])  # .pydantic = None
     with patch.object(crew_mod, "Crew") as mock_crew_cls:
-        mock_crew_cls.return_value.kickoff.return_value = bad_result
+        mock_crew_cls.return_value.kickoff_async = AsyncMock(return_value=bad_result)
         with pytest.raises(ValueError, match="AlternativesList"):
             crew_mod.find_alternative(trip_state=_trip_state(), block=_block(), reason=None)
 
@@ -147,7 +147,7 @@ def test_find_alternative_plumbs_step_callback_to_crew() -> None:
     def fake_crew_init(*_args: Any, **kwargs: Any) -> MagicMock:
         captured.update(kwargs)
         instance = MagicMock()
-        instance.kickoff.return_value = _alternatives_result()
+        instance.kickoff_async = AsyncMock(return_value=_alternatives_result())
         return instance
 
     sentinel = lambda _step: None  # noqa: E731

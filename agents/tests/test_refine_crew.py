@@ -17,7 +17,7 @@ Three load-bearing properties verified here:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from crewai import Process
 
@@ -91,7 +91,7 @@ def test_refine_uses_hierarchical_process_with_manager_llm() -> None:
     def fake_crew_init(*_args: Any, **kwargs: Any) -> MagicMock:
         captured.update(kwargs)
         instance = MagicMock()
-        instance.kickoff.return_value = _audited_result()
+        instance.kickoff_async = AsyncMock(return_value=_audited_result())
         return instance
 
     with patch.object(crew_mod, "Crew", side_effect=fake_crew_init):
@@ -116,7 +116,7 @@ def test_refine_passes_all_four_agents() -> None:
     def fake_crew_init(*_args: Any, **kwargs: Any) -> MagicMock:
         captured.update(kwargs)
         instance = MagicMock()
-        instance.kickoff.return_value = _audited_result()
+        instance.kickoff_async = AsyncMock(return_value=_audited_result())
         return instance
 
     with patch.object(crew_mod, "Crew", side_effect=fake_crew_init):
@@ -131,7 +131,7 @@ def test_refine_returns_audited_plan_dict() -> None:
     as plan_trip's output → persist_audited_plan consumes it unchanged.
     """
     with patch.object(crew_mod, "Crew") as mock_crew_cls:
-        mock_crew_cls.return_value.kickoff.return_value = _audited_result()
+        mock_crew_cls.return_value.kickoff_async = AsyncMock(return_value=_audited_result())
         out = crew_mod.refine(trip_state=_trip_state(), refinement_description="make it chill")
 
     assert isinstance(out, dict)
@@ -151,7 +151,7 @@ def test_refine_plumbs_step_callback_to_crew() -> None:
     def fake_crew_init(*_args: Any, **kwargs: Any) -> MagicMock:
         captured.update(kwargs)
         instance = MagicMock()
-        instance.kickoff.return_value = _audited_result()
+        instance.kickoff_async = AsyncMock(return_value=_audited_result())
         return instance
 
     sentinel = lambda _step: None  # noqa: E731
