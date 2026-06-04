@@ -60,7 +60,30 @@ def build_llm() -> LLM | None:
         return None
     get_langfuse()  # initialize the tracing client (no-op if keys absent)
     # litellm expects the anthropic/ prefix to route to Claude.
+    #
+    # Slice 225 — max_tokens=16000 override.
+    # CrewAI 1.14.5's Anthropic provider hardcodes max_tokens=4096 as its
+    # default (crewai/llms/providers/anthropic/completion.py:159). Under
+    # this codebase's legacy `tool_use` path — which fires because Sonnet
+    # 4.6 is NOT in CrewAI 1.14.5's NATIVE_STRUCTURED_OUTPUT_MODELS allow-
+    # list (line 64-69 of the same file) — the entire TripPlan JSON must
+    # fit inside one tool-input emission. 4096 sits right at the cliff
+    # edge for a multi-day TripPlan, producing intermittent
+    # `input_value={}` ValidationError failures (slice 225 diagnosis arc:
+    # ~33% baseline success rate across 9 JobRuns under default 4096,
+    # 2/2 success under 16000).
+    #
+    # Why max_tokens over a model swap (Sonnet 4.6 → 4.5): same one-line
+    # surface, but max_tokens has a smaller revert blast radius. The
+    # model pin would create a forward dependency on whichever Sonnet 4.6
+    # features we'd lose. A future Sonnet 4.7 makes the model pin
+    # immediately re-litigable; the max_tokens override carries forward.
+    #
+    # Forward-compat: when CrewAI adds Sonnet 4.6 (or later) to
+    # NATIVE_STRUCTURED_OUTPUT_MODELS, the native path runs and the
+    # max_tokens override doesn't conflict — becomes belt-and-suspenders.
     return LLM(
         model=f"anthropic/{settings.anthropic_model}",
         api_key=settings.anthropic_api_key,
+        max_tokens=16000,
     )
