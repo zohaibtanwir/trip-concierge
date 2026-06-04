@@ -236,8 +236,14 @@ async def test_get_trip_returns_404_message_when_trip_unknown(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_get_trip_without_token_returns_dev_cli_hint(tmp_path: Path) -> None:
+async def test_get_trip_no_token_no_email_returns_setup_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slice 4.1b: replaces the dev-CLI hint with the env-var setup hint."""
+    monkeypatch.delenv("TC_MCP_USER_EMAIL", raising=False)
     missing = tmp_path / "absent"
     with patch("trip_mcp.tools.get_trip._token_file", return_value=missing):
         text = await get_trip(trip_id=uuid.uuid4())
-    assert "tc-issue-mcp-token" in text
+    assert "TC_MCP_USER_EMAIL" in text
+    assert "tc-issue-mcp-token" not in text

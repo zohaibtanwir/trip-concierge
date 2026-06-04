@@ -109,9 +109,15 @@ async def export_trip(*, trip_id: uuid.UUID, format: str = "markdown") -> str:
     try:
         token = load_token(token_file=_token_file())
     except NoTokenError:
-        from trip_mcp.tools._base import _DEV_CLI_HINT  # noqa: PLC0415
+        from trip_mcp.challenges import (  # noqa: PLC0415
+            resolve_token_or_format_message,
+        )
 
-        return _DEV_CLI_HINT
+        new_token, message = await resolve_token_or_format_message(token_file=_token_file())
+        if new_token is None:
+            assert message is not None
+            return message
+        token = new_token
 
     with _http_client(token) as client:
         resp = client.get(f"/trips/{trip_id}/export", params={"format": format})

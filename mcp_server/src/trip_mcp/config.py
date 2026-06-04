@@ -30,3 +30,19 @@ def default_token_file() -> Path:
 
 def backend_url() -> str:
     return os.environ.get("BACKEND_URL", "http://localhost:8000")
+
+
+def user_email() -> str | None:
+    """Read TC_MCP_USER_EMAIL — the user's email for the MCP-side
+    magic-link challenge flow (slice 4.1b).
+
+    Returns None if missing or empty — challenges.py treats that as the
+    'not configured' branch and surfaces a setup hint to the user via
+    the @requires_auth decorator. We don't raise here so the read can be
+    safely called on every tool invocation without try/except.
+
+    Per-user config: set in Claude Desktop's MCP server config block.
+    See .env.example or CLAUDE.md for the snippet.
+    """
+    value = os.environ.get("TC_MCP_USER_EMAIL", "").strip()
+    return value or None
