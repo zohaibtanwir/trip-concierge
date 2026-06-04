@@ -359,10 +359,14 @@ Four agents, defined declaratively (role, goal, backstory, tools, memory enabled
 **Surface:** Both
 
 **Acceptance criteria:**
-- [ ] First MCP call from an unknown identity returns a short magic-link URL; user clicks once, account is created, future MCP calls are authenticated via a server-side token.
-- [ ] PWA login via email magic link or Google OAuth.
+- [x] First MCP call from an unknown identity returns a short magic-link URL; user clicks once, account is created, future MCP calls are authenticated via a server-side token. *(Slice 4.1b — backend-rendered redeem at `GET /auth/mcp/redeem?code=...`; MCP server polls `GET /auth/mcp/poll/{code}` and saves the JWT to disk once redeemed.)*
+- [x] PWA login via email magic link or Google OAuth. *(Slice 4.1 — Auth.js v5 + Resend magic-link + Google OAuth.)*
 - [ ] Trips are owned by the user; share links work without recipient sign-in (read-only) or require sign-in (collaborate).
 - [ ] User can delete their account; cascade-deletes all trips, sources, and memory.
+
+**MCP-side flow shape (Shape 1, server-driven polling):** The MCP server reads `TC_MCP_USER_EMAIL` from its per-user Claude Desktop config and POSTs to `/auth/mcp/challenge` on first tool call without a token. Backend creates an `auth_challenges` row, sends the magic-link email via Resend (subject distinguishes from PWA sign-in: *"Authorize Trip Concierge for Claude Desktop"*), and returns a short opaque code. The MCP server displays the magic-link URL to the user, then polls `/auth/mcp/poll/{code}` on each subsequent tool call. The user clicks the email link → backend renders an inline HTML success page (no PWA roundtrip — keeps MCP and PWA session trust roots separate). Next tool call's poll returns the minted MCP JWT (one-shot — row transitions to `consumed` so leaked codes can't replay). MCP server writes the JWT to `~/.config/trip-concierge/token`, retries the tool. Future tool calls read the token from disk normally.
+
+Without `TC_MCP_USER_EMAIL` set, MCP tools return a setup-hint message instead of attempting the flow.
 
 ---
 

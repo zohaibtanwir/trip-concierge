@@ -9,12 +9,13 @@ with TC_MCP_TOKEN_SECRET.
 # trade one Redis lookup per call for per-token revocation.
 
 Production entry points (both call issue_token below):
-- Slice 4.1 (mvs) — PWA-side. Auth.js signIn callback POSTs to
-  /internal/auth/mint-mcp-token in app.routes.auth after a successful
-  magic-link or Google OAuth sign-in.
-- Slice 4.1b (trip-concierge-0h0) — MCP-side challenge. User without
-  a token triggers a tool call; MCP server returns a magic-link URL;
-  backend's /auth/mcp/redeem mints the token after the user clicks.
+- Slice 4.1 (mvs) shipped the PWA-side entry. Auth.js signIn callback
+  POSTs to /internal/auth/mint-mcp-token in app.routes.auth after a
+  successful magic-link or Google OAuth sign-in.
+- Slice 4.1b (trip-concierge-0h0) shipped the MCP-side challenge. MCP
+  server POSTs to /auth/mcp/challenge for a user with no token; backend
+  sends magic-link email; user clicks → /auth/mcp/redeem mints the JWT;
+  MCP server polls /auth/mcp/poll/{code} to retrieve it.
 
 Plus the dev CLI (tc-issue-mcp-token) from slice 3.1 — see
 app.cli.issue_mcp_token. CLI is for local dev + ops repair only.
