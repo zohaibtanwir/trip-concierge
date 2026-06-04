@@ -227,11 +227,17 @@ async def test_create_trip_with_neither_destination_nor_vibe_asks_for_clarificat
 
 
 @pytest.mark.asyncio
-async def test_create_trip_without_token_returns_dev_cli_hint(tmp_path: Path) -> None:
-    """If no token is on disk, the @requires_auth decorator should
-    return the dev-CLI hint message (set in slice 3.1).
-    """
+async def test_create_trip_no_token_no_email_returns_setup_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slice 4.1b: with no token AND no TC_MCP_USER_EMAIL configured,
+    the tool returns the env-var setup hint (replaces the dev-CLI hint
+    that landed in slice 3.1)."""
+    monkeypatch.delenv("TC_MCP_USER_EMAIL", raising=False)
     missing_file = tmp_path / "absent"
     with patch("trip_mcp.tools.create_trip._token_file", return_value=missing_file):
         text = await create_trip(destination="Goa")
-    assert "tc-issue-mcp-token" in text
+    assert "TC_MCP_USER_EMAIL" in text
+    # The old dev-CLI hint must NOT come back — pin the migration.
+    assert "tc-issue-mcp-token" not in text

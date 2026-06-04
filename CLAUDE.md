@@ -184,8 +184,10 @@ Defined in `.env.example`. Copy to `.env.local` (web) and `.env` (backend) befor
 | `BACKEND_URL` | web | Internal API base URL |
 | `TC_MCP_TOKEN_SECRET` | backend, mcp_server | MCP token signing |
 | `INTERNAL_AUTH_SECRET` | backend, web | PWA→backend mint route shared secret (slice 4.1) |
-| `RESEND_API_KEY` | web | Magic link emails |
-| `RESEND_FROM_EMAIL` | web | From-address for magic-link emails (slice 4.1) |
+| `RESEND_API_KEY` | web, backend | Magic link emails (slice 4.1 PWA + slice 4.1b MCP) |
+| `RESEND_FROM_EMAIL` | web, backend | From-address for magic-link emails (slice 4.1 + 4.1b) |
+| `TC_MCP_USER_EMAIL` | mcp_server | Per-user email for MCP-side magic-link challenge (slice 4.1b) |
+| `CHALLENGE_TTL_MINUTES` | backend | Magic-link challenge lifetime (default 10, slice 4.1b) |
 
 ---
 

@@ -225,6 +225,15 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
 - **Files to create:** `web/app/api/auth/[...nextauth]/route.ts`, `web/lib/auth.ts`
 - **Tests:** middleware test that protected routes redirect.
 
+### Slice 4.1b: MCP-side magic-link challenge
+
+- [ ] **Done when:** MCP server with `TC_MCP_USER_EMAIL` configured but no token completes the full flow on first tool call: POST `/auth/mcp/challenge` → user clicks email link → GET `/auth/mcp/redeem` renders success HTML → next tool call's poll retrieves the JWT, MCP server saves to disk, tool succeeds.
+- **Tracked as:** `trip-concierge-0h0` (P1, blocks none).
+- **Files created:** `backend/app/services/mcp_challenges.py`, `backend/app/services/resend_send.py`, `backend/app/models/auth_challenge.py`, `backend/app/rate_limit.py`, `backend/app/db/migrations/versions/0009_auth_challenges.py`, `mcp_server/src/trip_mcp/challenges.py`.
+- **Files modified:** `backend/app/routes/auth.py` (3 new endpoints + slowapi decorators), `mcp_server/src/trip_mcp/{http_client,config,tools/_base}.py` + 10 tool files (replace `_DEV_CLI_HINT` with challenge flow).
+- **Tests:** 31 new backend + 8 net new mcp_server tests; 4 mcp_server tool tests renamed.
+- **Merge:** _<placeholder — post-merge footer convention>_
+
 ### Slice 4.2: Trip list and trip detail pages (server components)
 
 - [ ] **Done when:** Logged-in user sees their trips at `/trips`. Clicking a trip opens `/trips/{id}` with day-by-day itinerary.

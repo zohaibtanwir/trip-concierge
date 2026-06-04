@@ -2,8 +2,11 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.db.startup_check import verify_alembic_at_head
+from app.rate_limit import limiter
 from app.routes import (
     alternative,
     auth,
@@ -29,6 +32,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
 
 app = FastAPI(lifespan=lifespan)
+
+# slowapi wiring for the auth/mcp endpoints (slice 4.1b). The Limiter
+# instance lives in app.rate_limit so routes import it without circular
+# dependency on this module.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
 app.include_router(trips.router)
 app.include_router(plan.router)
 app.include_router(refine.router)

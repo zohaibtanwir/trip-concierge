@@ -165,19 +165,19 @@ async def test_export_returns_failed_message_on_404_trip_not_found(
 
 
 @pytest.mark.asyncio
-async def test_export_returns_dev_cli_hint_when_no_token_present(
+async def test_export_returns_setup_hint_when_no_token_and_no_email(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """NoTokenError path — mirrors slice-3.3 tool pattern.
-    Without a valid token file, the tool returns the dev-CLI hint
-    string for setup guidance rather than calling the backend.
+    """Slice 4.1b: replaces the slice-3.3 dev-CLI hint pattern. With no
+    token AND no TC_MCP_USER_EMAIL configured, the tool returns the
+    env-var setup hint and does NOT call the backend.
     """
-    # Don't seed a token — the load_token raises NoTokenError.
+    monkeypatch.delenv("TC_MCP_USER_EMAIL", raising=False)
     missing_token = tmp_path / "nonexistent"
 
     with patch("trip_mcp.tools.export_trip._token_file", return_value=missing_token):
         text = await export_trip(trip_id=uuid.uuid4(), format="json")
 
-    # The DEV CLI hint is a known string mentioning the issue-mcp-token CLI.
-    lower = text.lower()
-    assert "token" in lower
+    assert "TC_MCP_USER_EMAIL" in text
+    assert "tc-issue-mcp-token" not in text

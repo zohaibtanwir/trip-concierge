@@ -63,6 +63,22 @@ class Settings(BaseSettings):
         validation_alias="INTERNAL_AUTH_SECRET",
     )
 
+    # Resend send creds — slice 4.1b backend-side magic-link email for the
+    # MCP challenge flow. SAME Resend account + from-address as slice 4.1's
+    # web/Auth.js sends, but DIFFERENT subject + body so users can tell PWA
+    # sign-in from MCP-challenge in their inbox.
+    resend_api_key: str = Field(default="", validation_alias="RESEND_API_KEY")
+    resend_from_email: str = Field(
+        default="auth@tripconcierge.app",
+        validation_alias="RESEND_FROM_EMAIL",
+    )
+
+    # Magic-link challenge TTL (slice 4.1b). 10 minutes is the spec-locked
+    # window inherited from slice 4.1's RATE_LIMIT_POLL_PER_CODE = "1/2sec"
+    # × 600s = 300-poll cap. Tighter than Auth.js's 24h verification_token
+    # because MCP-challenge users are presumed to be at their keyboard.
+    challenge_ttl_minutes: int = Field(default=10, validation_alias="CHALLENGE_TTL_MINUTES")
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias="LOG_LEVEL"
     )

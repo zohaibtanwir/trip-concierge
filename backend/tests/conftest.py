@@ -29,7 +29,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.session import get_session
 from app.main import app
 from app.models.user import User
+from app.rate_limit import limiter
 from app.services.mcp_tokens import issue_token
+
+# Disable slowapi rate-limit checks across the entire test suite. Per-endpoint
+# rate-limit behavior is the concern of trip-concierge-7rz (slowapi-wiring
+# smoke tests, P3). Application-layer caps (the 300-poll lifetime check in
+# poll_challenge) are app code, tested directly without slowapi.
+limiter.enabled = False
 
 DEFAULT_TEST_DB_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/trip_concierge_test"
 _TEST_SECRET = "test-secret-32-bytes-or-more-padpad"

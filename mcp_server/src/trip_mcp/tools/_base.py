@@ -1,13 +1,15 @@
 """@requires_auth decorator — the seam between MCP tools and the token.
 
 Every tool calls into the backend via http_client.authed_client(), which
-needs a token from disk. If the token isn't there, we don't want the
-LLM to see a raw exception — we want a clear instruction for the human
-on how to fix it.
+needs a token from disk. If the token isn't there, we don't want the LLM
+to see a raw exception — we want a clear instruction for the human on
+how to fix it.
 
-In slice 3.1 the fix is the dev CLI. Slice 4.1 swaps the message body
-to the clicked-link flow without touching tool source — the decorator
-is the only place that knows.
+Slice 3.1 returned a dev-CLI hint string when no token was on disk.
+Slice 4.1b (0h0) swaps that for the production magic-link challenge
+flow: the decorator drives `_ensure_challenge_resolved` from challenges.py,
+which either returns a "redeemed" state (save the JWT + retry the inner
+tool function) or a sign-in URL the user clicks.
 
 Usage:
 
@@ -27,28 +29,23 @@ from functools import wraps
 from pathlib import Path
 from typing import TypeVar
 
-from trip_mcp.auth import NoTokenError, load_token
+from trip_mcp.auth import NoTokenError, load_token, save_token
+from trip_mcp.challenges import _ensure_challenge_resolved, _format_challenge_message
 
 T = TypeVar("T")
-
-_DEV_CLI_HINT = (
-    "Not authenticated. To use Trip Concierge MCP tools, issue a dev token:\n"
-    "\n"
-    "    uv run --project backend tc-issue-mcp-token --email <your-email>\n"
-    "\n"
-    "Then save the printed token to ~/.config/trip-concierge/token (mode 0600) "
-    "and restart Claude Desktop.\n"
-    "\n"
-    "Note: this dev CLI is temporary. The production magic-link flow lands in "
-    "Trip Concierge slice 4.1."
-)
 
 
 def requires_auth(
     *, token_file: Path | None = None
 ) -> Callable[[Callable[..., Awaitable[str]]], Callable[..., Awaitable[str]]]:
-    """Wrap an async tool function. On NoTokenError, return the CLI hint
-    as the tool's result so Claude Desktop surfaces it directly to the user.
+    """Wrap an async tool function.
+
+    On NoTokenError, drives the magic-link challenge flow:
+    - If the flow returns redeemed=True, save the JWT and retry the inner
+      tool function with the now-stored token (single-call cold-start).
+    - Otherwise, return the formatted challenge message (URL + retry hint,
+      OR "set TC_MCP_USER_EMAIL" hint) as the tool's text so Claude
+      Desktop surfaces it directly to the user.
     """
 
     def decorator(fn: Callable[..., Awaitable[str]]) -> Callable[..., Awaitable[str]]:
@@ -57,7 +54,12 @@ def requires_auth(
             try:
                 token = load_token(token_file=token_file)
             except NoTokenError:
-                return _DEV_CLI_HINT
+                state = await _ensure_challenge_resolved()
+                if state.redeemed and state.mcp_token is not None:
+                    save_token(state.mcp_token, token_file=token_file)
+                    token = load_token(token_file=token_file)
+                    return await fn(token, *args, **kwargs)
+                return _format_challenge_message(state)
             return await fn(token, *args, **kwargs)
 
         return wrapper

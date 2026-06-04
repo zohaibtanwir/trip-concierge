@@ -91,9 +91,15 @@ async def refine_trip(*, trip_id: uuid.UUID, refinement_description: str) -> str
     try:
         token = load_token(token_file=_token_file())
     except NoTokenError:
-        from trip_mcp.tools._base import _DEV_CLI_HINT  # noqa: PLC0415
+        from trip_mcp.challenges import (  # noqa: PLC0415
+            resolve_token_or_format_message,
+        )
 
-        return _DEV_CLI_HINT
+        new_token, message = await resolve_token_or_format_message(token_file=_token_file())
+        if new_token is None:
+            assert message is not None
+            return message
+        token = new_token
 
     body = {"refinement_description": refinement_description}
     destination = "your"  # we don't have it without an extra GET; keep generic
