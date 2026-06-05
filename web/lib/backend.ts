@@ -126,6 +126,13 @@ export async function mintMcpToken({ userId }: { userId: string }): Promise<Mint
   });
 
   if (!response.ok) {
+    // SECURITY NOTE: The error body is interpolated into the message.
+    // Today this is safe because /internal/auth/mint-mcp-token's error
+    // responses are hard-coded to fixed strings (e.g., "invalid internal
+    // secret"). Backend error bodies for this endpoint MUST NOT echo
+    // received headers or request bodies — that would surface
+    // INTERNAL_AUTH_SECRET in Next.js error pages. See
+    // backend/app/routes/auth.py:166-171.
     throw new Error(`mint_mcp_token HTTP ${response.status}: ${await response.text()}`);
   }
   return (await response.json()) as MintResult;

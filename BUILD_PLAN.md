@@ -236,9 +236,17 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
 
 ### Slice 4.2: Trip list and trip detail pages (server components)
 
-- [ ] **Done when:** Logged-in user sees their trips at `/trips`. Clicking a trip opens `/trips/{id}` with day-by-day itinerary.
-- **Files to create:** `web/app/trips/page.tsx`, `web/app/trips/[id]/page.tsx`, `web/lib/api.ts`
-- **Tests:** rendering test with mocked API responses.
+- [x] **Done when:** Authenticated users can view a list of their own trips (state-badged per derived state from latest plan JobRun + Redis active-job overlay), click through to a trip detail page that renders day-by-day blocks for succeeded trips, planning progress for in-flight trips, error message for failed trips, and "hasn't been planned yet" fallback for genuinely-unplanned trips. Ownership enforced at backend route level via 403 on cross-user access.
+- **Tracked as:** `trip-concierge-2th` (P1, blocks 4.3/4.4).
+- **Files created:**
+  - backend: 1 new route (`/internal/trips/{id}/active-job` Redis probe), 2 new test files (`test_trip_list_route.py`, `test_trip_ownership.py`, `test_internal_active_job.py`).
+  - web: 2 new RSC pages (`app/trips/page.tsx`, `app/trips/[id]/page.tsx`), 4 new components (`state-badge`, `trip-block`, `trip-day`, `trip-list-row`), 4 new test files (`backend.test.ts`, `trip-list.test.tsx`, `trip-detail.test.tsx`, `trip-row-and-day.test.tsx`).
+- **Files modified:**
+  - backend: `routes/trips.py` (ownership checks + list endpoint + internal active-job route), `services/trip_service.py` (Postgres+Redis dual-read), `schemas/trip.py` (TripListItem + TripListResponse), `models/trip.py` (DEPRECATED docstring on `status`), `main.py` (router registration).
+  - web: `lib/backend.ts` (added `fetchTripList` + `fetchTripDetail` + `BackendError`).
+- **Tests:** 14 new backend (11 from commit 1 + 3 from active-job route) + 25 new web = 39 net slice tests. Full suite (backend 192 + mcp_server 99 + agents 45 + web 39) = 375.
+- **Followup tickets filed:** `trip-concierge-id4` (drop dead `Trip.status` column), `e4v` (shadcn-ui pre-4.3), `og1` (loading/error.tsx pre-4.3), `hia` (extend `JobRun.status` enum to eliminate Redis dual-read), `29l` (distinguish rejected/failed UX in Phase 5), `req` (vitest auto-cleanup config), `pdo` (narrow `except Exception` in `_planning_trip_ids`), `jv7` (force-dynamic build-time guard).
+- **Merge:** _<placeholder — post-merge footer convention>_
 
 ### Slice 4.3: Day card UI — mobile-first
 
