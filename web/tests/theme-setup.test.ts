@@ -39,17 +39,20 @@ describe("design spec §13 — color tokens in globals.css", () => {
   });
 });
 
-describe("design spec §4.1 — fonts loaded", () => {
+describe("design spec §4.1 + §8 — fonts loaded via app/layout.tsx", () => {
+  // Google Fonts are loaded via <link> in layout.tsx, not via CSS
+  // @import — Tailwind v4 expands its own @import into rules and would
+  // place any later @import after them, violating CSS spec ordering.
   it("loads Montserrat headline font", () => {
-    expect(_GLOBALS_CSS).toMatch(/Montserrat/);
+    expect(_LAYOUT_TSX).toMatch(/Montserrat/);
   });
 
   it("loads Be Vietnam Pro body font", () => {
-    expect(_GLOBALS_CSS).toMatch(/Be\+Vietnam\+Pro/);
+    expect(_LAYOUT_TSX).toMatch(/Be\+Vietnam\+Pro/);
   });
 
   it("loads Material Symbols Outlined icon font", () => {
-    expect(_GLOBALS_CSS).toMatch(/Material\+Symbols\+Outlined/);
+    expect(_LAYOUT_TSX).toMatch(/Material\+Symbols\+Outlined/);
   });
 });
 
