@@ -62,7 +62,7 @@ export function TripMap({ destination, dayCount }: TripMapProps) {
   const label = `${_pluralDays(dayCount)} in ${coords.displayName}`;
 
   return (
-    <div className="h-[300px] md:h-[400px] rounded-xl overflow-hidden border border-outline-variant editorial-shadow">
+    <div className="h-[300px] md:h-[400px] rounded-xl overflow-hidden border border-outline-variant">
       <MapLibreMap
         mapLib={maplibregl}
         initialViewState={{

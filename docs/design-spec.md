@@ -491,8 +491,16 @@ only — planning state shows the in-progress section in the left
 column with no right-rail map.
 
 **Dimensions:** `h-[300px]` on mobile, `md:h-[400px]` on desktop. Full
-width within the right aside; rounded-xl + editorial-shadow per §6
-and §7.
+width within the right aside; rounded-xl per §6 + 1px border-outline-
+variant for visual separation.
+
+**No shadow on the panel itself.** TripMap uses `border-outline-
+variant` for visual separation, matching the other right-rail
+components (DayChipTimeline, PlanHistoryPanel). The right-rail as a
+whole is the sticky panel; individual components within it don't
+carry independent shadow elevation. This is a deliberate spec choice
+per §7 — shadows are reserved for sticky surfaces, not for visual
+polish on nested elements.
 
 **Tech choice:** [`react-map-gl`](https://visgl.github.io/react-map-gl/)
 (MapLibre subpath) + [`maplibre-gl`](https://maplibre.org/). Imported
