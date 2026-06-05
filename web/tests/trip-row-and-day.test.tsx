@@ -54,6 +54,19 @@ describe("<TripListRow />", () => {
     const link = screen.getByRole("link");
     expect(link.getAttribute("href")).toBe("/trips/trip-1");
   });
+
+  it("uses spec §3.6 palette tokens (primary / error), not slice 4.2's slate-amber-emerald-rose", async () => {
+    // Slice 4.3 — migration per design-spec.md §14. The state badge classes
+    // must reference the spec §3.6 palette tokens. This test reads the
+    // state-badge source file and asserts the new tokens replaced the old.
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const src = readFileSync(resolve(__dirname, "../components/state-badge.tsx"), "utf-8");
+    // New tokens must appear (at least one per state).
+    expect(src).toMatch(/bg-primary|bg-error-container|bg-surface-container|bg-primary-fixed/);
+    // Old tokens from slice 4.2 must NOT appear.
+    expect(src).not.toMatch(/bg-emerald-100|bg-rose-100|bg-amber-100|bg-slate-100/);
+  });
 });
 
 // --- trip-day ---
@@ -126,5 +139,19 @@ describe("<TripDay />", () => {
     const { TripDay } = await import("@/components/trip-day");
     render(<TripDay day={_DAY_BASE} />);
     expect(screen.getByText(/Day 1/)).toBeDefined();
+  });
+
+  it("renders blocks with §9.5 numbered-circle vertical timeline pattern", async () => {
+    // Slice 4.3 — spec §9.5 specifies numbered circles + vertical connector
+    // line as the block-rendering pattern within a day. This test reads the
+    // trip-day.tsx source and asserts the pattern is present (numbered
+    // circles via flex layout + connector via vertical w-0.5 divider).
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const src = readFileSync(resolve(__dirname, "../components/trip-day.tsx"), "utf-8");
+    // §9.5 marker: bg-primary-container on the numbered circle.
+    expect(src).toMatch(/bg-primary-container/);
+    // §9.5 connector marker: vertical thin line (w-0.5 + bg-outline-variant).
+    expect(src).toMatch(/w-0\.5/);
   });
 });

@@ -92,6 +92,13 @@ export interface TripFull {
   days: TripDay[];
 }
 
+export interface AgentSummaryRow {
+  agent: string;
+  step: number;
+  duration_ms: number;
+  tokens?: number;
+}
+
 export interface PlanStatus {
   state: "queued" | "running" | "cancelling" | "done" | "failed" | "cancelled" | "no_job";
   approved: boolean | null;
@@ -99,6 +106,10 @@ export interface PlanStatus {
   kind: string | null;
   progress_message?: { agent: string; pass: number; message: string } | null;
   error?: string | null;
+  // Slice 4.3 — PRD §F8 partial. Surface from backend PlanStatus
+  // schema. Empty list on legacy JobRuns (pre-qek-a); null on
+  // synthesized no_job state (no JobRun row exists at all).
+  agent_summary?: AgentSummaryRow[] | null;
 }
 
 export interface TripDetail {

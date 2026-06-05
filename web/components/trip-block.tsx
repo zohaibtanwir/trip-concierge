@@ -1,14 +1,26 @@
 /**
- * TripBlock — pure render of a single itinerary block.
+ * TripBlock — pure render of a single itinerary block in the day list.
  *
- * Slice 4.2 — venue + time + cost + notes + sources. No swipe gestures,
- * no expand-collapse, no thumbnails — those land in slice 4.3 (refine UX).
+ * Slice 4.3 — spec §8 Material Symbols by block.type:
+ *   venue   → location_on
+ *   meal    → restaurant
+ *   transit → directions_car
+ *   rest    → bed
  *
- * Pure render: no branching beyond null guards on optional fields. No
- * tests for this file (exercised transitively by trip-day tests).
+ * The block-expand surface (Sheet/Dialog) wraps this in
+ * <BlockExpand /> at the page level. This component itself is the
+ * default (collapsed) rendering — venue name + meta line + optional
+ * notes preview.
  */
 
 import type { Block } from "@/lib/backend";
+
+const _ICON_BY_TYPE: Record<string, string> = {
+  venue: "location_on",
+  meal: "restaurant",
+  transit: "directions_car",
+  rest: "bed",
+};
 
 function _formatCost(est_cost: string | null, currency: string): string | null {
   if (est_cost === null || est_cost === "") return null;
@@ -27,30 +39,22 @@ function _formatDuration(minutes: number): string | null {
 export function TripBlock({ block }: { block: Block }) {
   const cost = _formatCost(block.est_cost, block.currency);
   const duration = _formatDuration(block.duration_minutes);
+  const icon = _ICON_BY_TYPE[block.type] ?? "place";
 
   return (
-    <div className="border-l-2 border-slate-300 pl-4 py-2">
-      <div className="flex items-baseline gap-2">
-        <span className="font-medium">{block.venue_name}</span>
-        <span className="text-xs uppercase text-slate-500">{block.type}</span>
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="material-symbols-outlined text-primary text-lg" aria-hidden>
+          {icon}
+        </span>
+        <h5 className="text-label-md text-on-surface">{block.venue_name}</h5>
       </div>
-      <div className="text-sm text-slate-600 mt-1 flex gap-3 flex-wrap">
+      <div className="mt-1 flex flex-wrap gap-3 text-sm text-on-surface-variant">
         {block.start_time && <span>{block.start_time}</span>}
         {duration && <span>{duration}</span>}
         {cost && <span>{cost}</span>}
       </div>
-      {block.notes && <p className="text-sm text-slate-700 mt-2">{block.notes}</p>}
-      {block.sources.length > 0 && (
-        <ul className="text-xs text-slate-500 mt-2 list-disc list-inside">
-          {block.sources.map((s) => (
-            <li key={s.id}>
-              <a href={s.url} className="underline" rel="noopener noreferrer" target="_blank">
-                {s.url}
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
+      {block.notes && <p className="mt-2 text-body-md text-on-surface-variant">{block.notes}</p>}
     </div>
   );
 }

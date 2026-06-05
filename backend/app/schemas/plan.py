@@ -22,7 +22,7 @@ Client polling pattern:
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -72,3 +72,11 @@ class PlanStatus(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     trip_url: str | None = None
+    # Slice 4.3 — PRD §F8 partial. The PWA detail page's
+    # 'How this plan was made' panel reads this list. Populated from the
+    # latest plan-kind JobRun's agent_summary JSONB column on terminal
+    # states; empty list on pre-qek-a JobRuns; absent on non-terminal
+    # states (queued/running/cancelling — no JobRun row yet). Each row
+    # carries at least {agent, step, duration_ms}; per-step reasoning is
+    # tracked separately for future enrichment (trip-concierge-gco).
+    agent_summary: list[dict[str, Any]] | None = None

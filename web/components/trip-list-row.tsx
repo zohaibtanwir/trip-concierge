@@ -1,9 +1,10 @@
 /**
  * TripListRow — one row in the trip list, click-through to detail.
  *
- * Slice 4.2. Renders state-badge + destination + dates + budget. The
- * entire row is an anchor tag whose href points to /trips/[id]; the
- * detail page is the next stop in the navigational flow.
+ * Slice 4.3 — migrated to spec §3.6 palette tokens + spec §7
+ * editorial-shadow / active-teal-glow on hover (replaces slice 4.2's
+ * generic hover:bg-slate-50). State badge + destination + dates + budget.
+ * Anchor wraps the whole row.
  *
  * Tests in tests/trip-row-and-day.test.tsx exercise the 4-way badge
  * mapping and the link href invariant.
@@ -25,13 +26,13 @@ export function TripListRow({ item }: { item: TripListItem }) {
   return (
     <Link
       href={`/trips/${item.id}`}
-      className="block border border-slate-200 rounded-lg p-4 hover:bg-slate-50 transition-colors"
+      className="block rounded-xl border border-outline-variant bg-surface-container-lowest p-6 transition-all editorial-shadow hover:active-teal-glow focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
     >
       <div className="flex items-center justify-between gap-3">
-        <span className="font-medium text-slate-900">{item.destination}</span>
+        <span className="text-lg font-semibold text-on-surface">{item.destination}</span>
         <StateBadge state={item.state as TripState} />
       </div>
-      <div className="text-sm text-slate-600 mt-1 flex gap-3 flex-wrap">
+      <div className="mt-2 flex flex-wrap gap-3 text-sm text-on-surface-variant">
         {dates && <span>{dates}</span>}
         {item.budget_total && (
           <span>

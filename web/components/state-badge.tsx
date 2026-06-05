@@ -1,21 +1,23 @@
 /**
  * StateBadge — pure render of the 4-way derived trip state.
  *
- * Slice 4.2 — see backend/app/services/trip_service.list_trips_for_user
- * for the state derivation rules.
+ * Slice 4.3 — migrated to spec §3.6 palette tokens (replaces slice 4.2's
+ * slate/amber/emerald/rose Tailwind defaults). Each state maps to a
+ * primary/error/surface token pair per the design table.
  *
- * Pure render: no logic beyond the table mapping. No tests for this file
- * (the table is exercised transitively by trip-list-row tests via
- * `it.each`).
+ * Pure render: no logic beyond the table mapping. No tests on this file
+ * directly — the §3.6 token migration is asserted by
+ * tests/trip-row-and-day.test.tsx via file-content read.
  */
 
 export type TripState = "succeeded" | "failed" | "planning" | "no_job";
 
 const _STATE_CLASSES: Record<TripState, string> = {
-  succeeded: "bg-emerald-100 text-emerald-900",
-  failed: "bg-rose-100 text-rose-900",
-  planning: "bg-amber-100 text-amber-900",
-  no_job: "bg-slate-100 text-slate-700",
+  // spec §3.6 — palette tokens
+  planning: "bg-primary-fixed-dim/20 text-on-primary-fixed-variant",
+  succeeded: "bg-primary-container/10 text-primary",
+  failed: "bg-error-container text-on-error-container",
+  no_job: "bg-surface-container-high text-on-surface-variant",
 };
 
 const _STATE_LABELS: Record<TripState, string> = {
@@ -28,7 +30,5 @@ const _STATE_LABELS: Record<TripState, string> = {
 export function StateBadge({ state }: { state: TripState }) {
   const cls = _STATE_CLASSES[state];
   const label = _STATE_LABELS[state];
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{label}</span>
-  );
+  return <span className={`rounded-full px-3 py-1 text-xs font-medium ${cls}`}>{label}</span>;
 }

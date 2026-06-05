@@ -61,6 +61,7 @@ def _make_job_run(
     approved: bool | None = None,
     error: str | None = None,
     job_id: str | None = None,
+    agent_summary: list | None = None,
 ) -> JobRun:
     """Insert a JobRun row directly for tests that exercise post-terminal state."""
     row = JobRun(
@@ -69,7 +70,7 @@ def _make_job_run(
         status=status,
         approved=approved,
         error=error,
-        agent_summary=[],
+        agent_summary=agent_summary if agent_summary is not None else [],
         total_tokens=0,
         total_cost=Decimal("0"),
         total_duration_ms=0,
@@ -294,6 +295,91 @@ def test_status_returns_cancelled(client: TestClient, db_session: Session) -> No
     body = response.json()
     assert body["state"] == "cancelled"
     assert body["approved"] is None
+
+
+# --- Slice 4.3 — agent_summary surfaces on terminal states ---
+
+
+_SAMPLE_AGENT_SUMMARY = [
+    {"agent": "Researcher", "step": 1, "duration_ms": 32500, "tokens": 1840},
+    {"agent": "Local Expert", "step": 2, "duration_ms": 28100, "tokens": 1560},
+    {"agent": "Logistics", "step": 3, "duration_ms": 41200, "tokens": 2310},
+    {"agent": "Budget Auditor", "step": 4, "duration_ms": 18900, "tokens": 980},
+]
+
+
+def test_status_returns_agent_summary_when_done(client: TestClient, db_session: Session) -> None:
+    """Slice 4.3 — PRD §F8 partial. The 'How this plan was made' panel reads
+    PlanStatus.agent_summary; the route must surface JobRun.agent_summary
+    on done state.
+    """
+    trip = _make_trip(db_session)
+    _make_job_run(
+        db_session,
+        trip.id,
+        status="succeeded",
+        approved=True,
+        agent_summary=_SAMPLE_AGENT_SUMMARY,
+    )
+    pool = _pool_with()
+
+    with patch("app.routes.plan.create_pool", return_value=pool):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "done"
+    assert body["agent_summary"] == _SAMPLE_AGENT_SUMMARY
+
+
+def test_status_returns_agent_summary_when_failed(client: TestClient, db_session: Session) -> None:
+    """Even on failed state, agent_summary surfaces — partial activity is
+    diagnostic ('Researcher ran for 32s, Local Expert never started')."""
+    trip = _make_trip(db_session)
+    partial = _SAMPLE_AGENT_SUMMARY[:2]  # only Researcher + Local Expert ran
+    _make_job_run(
+        db_session,
+        trip.id,
+        status="failed",
+        approved=None,
+        error="FatalJobError: planner output empty",
+        agent_summary=partial,
+    )
+    pool = _pool_with()
+
+    with patch("app.routes.plan.create_pool", return_value=pool):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "failed"
+    assert body["agent_summary"] == partial
+
+
+def test_status_returns_empty_agent_summary_for_legacy_jobruns(
+    client: TestClient, db_session: Session
+) -> None:
+    """JobRuns from pre-qek-a observability ran without step_callback wired,
+    so their agent_summary column is `[]`. The route must surface empty list
+    (not null), preserving downstream consumers' .map() / .length checks.
+    """
+    trip = _make_trip(db_session)
+    _make_job_run(
+        db_session,
+        trip.id,
+        status="succeeded",
+        approved=True,
+        agent_summary=[],
+    )
+    pool = _pool_with()
+
+    with patch("app.routes.plan.create_pool", return_value=pool):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "done"
+    assert body["agent_summary"] == []
 
 
 def test_status_returns_cancelling_during_tombstone_race(

@@ -252,6 +252,47 @@ describe("fetchTripDetail", () => {
     );
   });
 
+  it("surfaces agent_summary from /plan/status in the returned planStatus", async () => {
+    // Slice 4.3 — PRD §F8 partial. The 'How this plan was made' panel
+    // reads detail.planStatus.agent_summary. Pins that the type and the
+    // wire path flow through fetchTripDetail unchanged.
+    const sampleSummary = [
+      { agent: "Researcher", step: 1, duration_ms: 32500, tokens: 1840 },
+      { agent: "Local Expert", step: 2, duration_ms: 28100, tokens: 1560 },
+    ];
+    _mockFetchSequence([
+      _jsonResponse({ mcp_token: "jwt", expires_at: "x" }),
+      _jsonResponse({
+        id: "trip-1",
+        user_id: "user-abc",
+        status: "draft",
+        destination: "Coorg",
+        start_date: null,
+        end_date: null,
+        group_size: 2,
+        budget_total: null,
+        currency: "INR",
+        constraints: {},
+        pace: "balanced",
+        created_at: "2026-06-05T05:00:00Z",
+        updated_at: "2026-06-05T05:00:00Z",
+        days: [],
+      }),
+      _jsonResponse({
+        state: "done",
+        approved: true,
+        job_id: "job-xyz",
+        kind: "plan",
+        agent_summary: sampleSummary,
+      }),
+    ]);
+
+    const { fetchTripDetail } = await import("@/lib/backend");
+    const detail = await fetchTripDetail({ userId: "user-abc", tripId: "trip-1" });
+
+    expect(detail.planStatus.agent_summary).toEqual(sampleSummary);
+  });
+
   it("synthesizes no_job state when /plan/status 404 and active-job absent", async () => {
     _mockFetchSequence([
       _jsonResponse({ mcp_token: "jwt", expires_at: "x" }),
