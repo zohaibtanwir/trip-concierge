@@ -1,12 +1,18 @@
 /**
- * Playwright config — slice 4.3 minimal e2e smoke (trip-concierge-d74).
+ * Playwright config — slice 4.3 unauthed smoke + slice 4.4 auth-gated
+ * fixture (trip-concierge-d74, trip-concierge-p8l).
  *
- * Scoped narrowly: covers UNAUTHENTICATED surface only (/, /login). The
- * auth-gated smoke fixture (JWE cookie storageState approach) is tracked
- * as a separate followup ticket for slice 4.4 to consume.
+ * Two projects:
+ *   - chromium          (unauthed surface — /login, theme tokens, fonts,
+ *                        Material Symbols). Run via `pnpm test:e2e:unauthed`.
+ *   - chromium-authed   (storageState from `playwright-auth.json`; covers
+ *                        /trips and /trips/[id] surfaces). Run via
+ *                        `pnpm test:e2e:auth` which seeds the trip and
+ *                        mints the cookie before invoking Playwright.
  *
- * Run: pnpm exec playwright test
- * Run against an already-running dev server: BASE_URL=http://localhost:3000 pnpm exec playwright test
+ * Each project's `testIgnore` keeps the other's specs out of its run so
+ * a single `playwright test` invocation without `--project` (which CI
+ * uses) executes each file in exactly the right context.
  */
 
 import { defineConfig } from "@playwright/test";
@@ -25,7 +31,18 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: /auth-fixture-smoke|slice-4\.4/,
       use: { browserName: "chromium" },
+    },
+    {
+      name: "chromium-authed",
+      testMatch: /auth-fixture-smoke|slice-4\.4/,
+      use: {
+        browserName: "chromium",
+        // storageState is minted by web/scripts/mint-playwright-auth.ts.
+        // Run `pnpm test:e2e:auth` to seed + mint + execute in one shot.
+        storageState: "./playwright-auth.json",
+      },
     },
   ],
 });

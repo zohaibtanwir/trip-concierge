@@ -11,7 +11,11 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "mint:auth": "tsx scripts/mint-playwright-auth.ts",
+    "seed:e2e-trip": "tsx scripts/seed-e2e-trip.ts",
+    "test:e2e:unauthed": "playwright test --project=chromium",
+    "test:e2e:auth": "pnpm seed:e2e-trip && pnpm mint:auth && playwright test --project=chromium-authed"
   },
   "dependencies": {
     "@auth/pg-adapter": "1.11.2",
@@ -36,10 +40,13 @@
     "@types/react": "18.3.29",
     "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "6.0.2",
+    "@panva/hkdf": "1.2.1",
+    "jose": "6.2.3",
     "jsdom": "29.1.1",
     "playwright": "1.60.0",
     "shadcn": "4.10.0",
     "tailwindcss": "4.3.0",
+    "tsx": "4.22.4",
     "typescript": "6.0.3",
     "vitest": "4.1.7"
   }

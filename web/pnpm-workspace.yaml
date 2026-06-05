@@ -14,6 +14,11 @@ overrides:
 # msw is Mock Service Worker — transitive dev dep (via Next.js test
 # scaffolds we don't use). Its postinstall copies a service worker file
 # we don't load. Block per CLAUDE.md hard rule 3 (ignore-scripts by default).
+# esbuild is a transitive of tsx (used by web/scripts/*.ts e2e helpers).
+# Its install script downloads platform-specific binaries; we don't need
+# those at install time because tsx invokes them via Node child processes
+# at run time. Block per CLAUDE.md hard rule 3.
 allowBuilds:
+  esbuild: false
   msw: false
   sharp: false
