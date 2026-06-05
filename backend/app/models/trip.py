@@ -43,6 +43,10 @@ class Trip(Base):
         nullable=False,
         index=True,
     )
+    # DEPRECATED: always 'draft' since slice 1.x — zero UPDATE sites in
+    # codebase. Truth source for trip lifecycle is JobRun.status (latest
+    # plan-kind row); the list endpoint derives 'state' from that. See
+    # trip-concierge-id4 for the column-drop slice.
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

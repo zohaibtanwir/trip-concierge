@@ -40,6 +40,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 app.include_router(trips.router)
+app.include_router(trips.internal_router)
 app.include_router(plan.router)
 app.include_router(refine.router)
 app.include_router(regenerate.router)
