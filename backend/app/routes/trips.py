@@ -11,17 +11,31 @@ auth holes — added GET /trips (list, owner-filtered), added ownership
 checks on GET /trips/{id} + GET /trips/{id}/full (both 403 on cross-
 user). Cross-user reads return 403 (not 404): the trip exists, you
 just can't see it.
+
+Slice 4.2 tightening: added GET /internal/trips/{tripId}/active-job
+(internal_router below). The PWA detail page calls this when
+/plan/status returns 404 — distinguishes "worker enqueued but
+JobRun not yet written" (UX state: planning) from "no plan attempt
+ever made" (UX state: no_job). Without this, a user landing on
+the detail page within the ~1-3s enqueue → first-JobRun-write window
+would see a blank page. The endpoint uses the same INTERNAL_AUTH_SECRET
+pattern as /internal/auth/mint-mcp-token.
 """
 
 from __future__ import annotations
 
+import hmac
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from arq import create_pool
+from arq.connections import RedisSettings
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_mcp_token
+from app.config import settings
 from app.db.session import get_session
 from app.models.user import User
 from app.schemas.trip import (
@@ -34,9 +48,24 @@ from app.schemas.trip import (
 from app.services import trip_service
 
 router = APIRouter(prefix="/trips", tags=["trips"])
+internal_router = APIRouter(prefix="/internal/trips", tags=["internal-trips"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 AuthedUser = Annotated[User, Depends(require_mcp_token)]
+
+
+def _internal_secret() -> str:
+    """Indirection so tests can patch this without monkey-patching settings.
+
+    Same pattern as app.routes.auth._internal_secret. Each route module
+    that uses INTERNAL_AUTH_SECRET keeps its own helper so test patches
+    don't have to remember which module wraps which helper.
+    """
+    return settings.internal_auth_secret
+
+
+class ActiveJobResponse(BaseModel):
+    active: bool
 
 
 @router.post("", response_model=TripRead, status_code=status.HTTP_201_CREATED)
@@ -72,6 +101,38 @@ def get_trip(trip_id: uuid.UUID, user: AuthedUser, db: SessionDep) -> TripRead:
     if trip.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
     return TripRead.model_validate(trip)
+
+
+@internal_router.get("/{trip_id}/active-job", response_model=ActiveJobResponse)
+async def get_active_job(
+    trip_id: uuid.UUID,
+    x_internal_secret: Annotated[str | None, Header(alias="X-Internal-Secret")] = None,
+) -> ActiveJobResponse:
+    """Probe whether a Redis active_job key exists for the given trip.
+
+    Slice 4.2 tightening. Called by the PWA's fetchTripDetail helper
+    when /plan/status returns 404 — distinguishes "job enqueued, worker
+    hasn't written terminal JobRun yet" (PWA shows planning UI) from
+    "no plan attempt ever made" (PWA shows no_job UI).
+
+    No DB round-trip; pure Redis key existence check. No JWT user
+    auth — uses INTERNAL_AUTH_SECRET header like /internal/auth/mint-
+    mcp-token. The PWA server, not the browser, calls this endpoint.
+
+    Returns {active: bool}. No information about the active job's
+    job_id or kind is leaked — the PWA only needs the boolean for the
+    UX branch.
+    """
+    expected = _internal_secret()
+    if x_internal_secret is None or not hmac.compare_digest(x_internal_secret, expected):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="invalid internal secret",
+        )
+
+    redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    value = await redis.get(f"trip:{trip_id}:active_job")
+    return ActiveJobResponse(active=value is not None)
 
 
 @router.get("/{trip_id}/full", response_model=TripFullRead)
