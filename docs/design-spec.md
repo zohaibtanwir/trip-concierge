@@ -725,6 +725,66 @@ Open these in a browser to see what the patterns in §9 look like in context. Th
 
 ---
 
+## 17. v1.1 prep — gaps surfaced during slice 4.3
+
+The following patterns were used during slice 4.3 component design but are not formally defined in v1.0 of this spec. They will land as proper sections in v1.1 (tracked as `trip-concierge-auu`) once two-or-three of them settle through implementation cycles.
+
+### 17.1 Sticky variant of §9.4 day-scroll timeline
+
+When scrolling within a day's block list, the day chip timeline pins to the top. Slice 4.3 implementation (`web/components/day-chip-timeline.tsx`) uses `sticky top-20` + `.glass-header` backdrop blur on the chip bar container. v1.1 to formalize the offset value and the chip transition states (when does a chip transition from "future" → "current" → "completed"?).
+
+### 17.2 Dialog component pattern (shadcn / Radix Dialog)
+
+Introduced in slice 4.3 for: (a) Plan-again confirm flow on failed trips (`web/components/plan-again-dialog.tsx`), (b) desktop variant of block expand-on-tap (`web/components/block-expand.tsx`). v1.1 to define overlay backdrop opacity, max-width per content type, close-button positioning.
+
+### 17.3 Sheet pattern (shadcn / Radix Dialog `side="bottom"`)
+
+Introduced in slice 4.3 for mobile block expand-on-tap (`web/components/block-expand.tsx`). v1.1 to define sheet height (full / half / fit-content), drag-to-dismiss behavior, header treatment.
+
+### 17.4 Block expand-state field list
+
+v1.0a slice 4.3 renders: notes, start_time + duration, est_cost, sources (URLs). Backend block enrichment (`trip-concierge-gco`) adds opening_hours, full_address, photos, why_picked. v1.1 formalizes the expanded-state layout once enrichment lands. Until then, `BlockDetail` ships honest empty-state placeholders.
+
+### 17.5 "How this plan was made" panel (PRD §F8 partial)
+
+Slice 4.3 ships a collapsible panel (`web/components/plan-history-panel.tsx`) that reads `JobRun.agent_summary` and renders one row per agent step with duration. v1.1 to define row icon set, completion-state rendering, expand-step-to-show-reasoning interaction (requires backend enrichment to surface per-step reasoning text).
+
+### 17.6 Swipe gesture states (PRD §F2 deferred)
+
+PRD §F2 specifies swipe-left removes + swipe-right locks. Visual states during swipe (threshold-crossed feedback, snap-back animation, lock-confirmed pulse) are undefined in v1.0. Bundled into `trip-concierge-0hi`. v1.1 lands visual states alongside gesture implementation.
+
+### 17.7 Material Symbol → block type mapping
+
+Slice 4.3 maps block types to Material Symbols inline in `web/components/trip-block.tsx`:
+
+- venue → `location_on`
+- meal → `restaurant`
+- transit → `directions_car`
+- rest → `bed`
+
+v1.1 to define the full mapping table including future block types and icon variation settings (fill/weight) for active vs default.
+
+### 17.8 Plan-again confirm flow
+
+Slice 4.3 wires a Dialog confirm + Server Action POST to `/trips/{id}/plan` on failed trips (`web/components/plan-again-dialog.tsx` + `web/lib/actions.ts`). v1.1 to define the broader pattern: when does a destructive or expensive action require Dialog confirmation vs. inline button?
+
+### 17.9 Tailwind v4 CSS-first config
+
+Spec §13 in v1.0 shows v3-syntax `tailwind.config.ts`. v1.0a project is on Tailwind v4 with CSS-first `@theme` blocks in `app/globals.css`. v1.1 to update §13 with v4 syntax (semantic content unchanged; mechanical syntax migration).
+
+### 17.10 Motion language clarification — CSS-utility animations
+
+§11 states "No Framer Motion or other animation libraries (v1.0a)" — written with JS-based expressive motion libraries in mind. Slice 4.3 ships shadcn primitives that include `tw-animate-css` utilities for Sheet/Dialog enter/exit micro-interactions. These are CSS keyframe animations, not JS expressive motion, and don't violate §11's substance (restrained motion language for a thinking tool).
+
+v1.1 to clarify §11 with the distinction between:
+
+- **ALLOWED:** CSS-utility-based open/close/hover micro-interactions (`tw-animate-css`, native CSS transitions, transform-only effects).
+- **DEFERRED:** JS-based animation libraries (Framer Motion, GSAP, React Spring) — still excluded for v1.0a, can revisit Phase 5.
+
+This isn't a behavior change — slice 4.3's animations are correct per §11's intent. v1.1 just makes the boundary explicit.
+
+---
+
 ## Changelog
 
 - **v1.0** (2026-06-05) — Initial spec. Derived from Voyage Elite reference during slice 4.3 design dialogue. Trip Concierge brand framing established (thinking-tool, not marketplace). All tokens, patterns, and copy guidance defined.

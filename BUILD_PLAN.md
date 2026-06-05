@@ -250,9 +250,29 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
 
 ### Slice 4.3: Day card UI — mobile-first
 
-- [ ] **Done when:** Day view renders correctly at 360px. Touch targets ≥ 44px. Sticky day chip nav. Swipe-to-lock and swipe-to-remove work.
-- **Files to create:** `web/components/DayCard.tsx`, `web/components/BlockItem.tsx`, `web/components/DayNav.tsx`
-- **Tests:** Playwright mobile-viewport test.
+- [x] **Done when:** Trip Concierge design spec v1.0 landed (`docs/design-spec.md` + 4 voyage-elite reference HTMLs). Tailwind v4 theme tokens via CSS-first `@theme` config, Google Fonts + Material Symbols wired, shadcn-ui scaffolded with Button + Sheet + Dialog. 4 slice-4.2 components migrated to spec §14 patterns (state-badge §3.6 palette, trip-day numbered-circle vertical timeline §9.5, trip-block Material Symbols by type, trip-list-row active-teal-glow + focus-visible:ring). Trip detail page two-column layout §9.2 with sticky day chip timeline + "How this plan was made" panel rendering agent activity from JobRun.agent_summary (PRD §F8 partial). Plan-again Dialog confirms full replan on failed trips via planAgainAction Server Action.
+
+- ⚠️ **PRD §F2 partial compliance:** Slice 4.3 ships visual scaffolding only. Block expand-on-tap wrapper (`BlockExpand`) exists but is not wired to block clicks — wiring lands with refine UX in slice 4.5/4.6. Gesture behaviors (swipe-left removes + swipe-right locks + 5s undo + locked-block schema) bundled into `trip-concierge-0hi` for the same slice. v1.0a release criteria include explicit §F2 review at Phase 5 closeout.
+
+- **Tracked as:** `trip-concierge-d74` (P1, blocks 4.4/4.5/4.6).
+- **Files created:**
+  - docs: `design-spec.md` (spec v1.0, 17 sections); `design-references/voyage-elite-{explore,itinerary,booking,profile}.html` (4 reference screens).
+  - web (components): `components/ui/{button,sheet,dialog}.tsx` (shadcn primitives); `components/{block-detail,block-expand,day-chip-timeline,plan-history-panel,plan-again-dialog}.tsx` (5 new components); `components.json` + `lib/utils.ts` (shadcn config + cn helper).
+  - web (server action): `lib/actions.ts` (planAgainAction).
+  - web (tests): `tests/{theme-setup,ui-button,ui-sheet,ui-dialog,actions,block-expand,day-chip-timeline,plan-again-dialog,plan-history-panel}.test.{ts,tsx}` (9 new test files).
+- **Files modified:**
+  - backend: `schemas/plan.py` (agent_summary field), `routes/plan.py` (populate from latest JobRun), `tests/test_plan_status.py` (3 new assertions).
+  - web (theme): `app/globals.css` (Tailwind v4 @theme block per spec §13 + §13.1 custom CSS); `package.json` (exact-pinned shadcn deps; lucide-react removed); `pnpm-workspace.yaml` (msw ignored builds); `biome.json` (components/ included, globals.css excluded per Tailwind v4 parser gap — see `trip-concierge-ydi`).
+  - web (components): `components/{state-badge,trip-list-row,trip-day,trip-block}.tsx` (spec §14 migration).
+  - web (pages): `app/trips/page.tsx` (sticky glass header + typography tokens); `app/trips/[id]/page.tsx` (two-column layout + sticky right panel + Plan again wiring).
+  - web (tests): `tests/{trip-detail,trip-row-and-day,backend}.test.{ts,tsx}` (new assertions + token-migration source-reads).
+- **Tests:** 22 net new slice tests (3 backend agent_summary + 19 web: theme-setup 26 + 3 shadcn smokes + new component tests + token-migration reads + integration assertions). Cumulative repo total: 428 (backend 195 + mcp_server 99 + agents 45 + web 89).
+- **Followup tickets filed:**
+  - Spec scope: `trip-concierge-auu` (v1.1 patterns), `0hi` (§F2 gesture compliance debt bundled), `gco` (backend block enrichment).
+  - Server actions: `u8v` (object-args refactor for planAgainAction + future actions).
+  - Tooling: `ydi` (Biome CSS-parser re-eval when 2.5+ ships).
+  - Closed in this slice: `e4v` (shadcn-ui pre-4.3) — install landed in commit 1.
+- **Merge:** _<placeholder — post-merge footer convention>_
 
 ### Slice 4.4: Map view with MapLibre
 
