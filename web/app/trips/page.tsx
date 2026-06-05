@@ -1,18 +1,12 @@
 /**
  * /trips — list of the signed-in user's trips.
  *
- * Slice 4.2. RSC: auth() → fetchTripList(userId) → render rows. Empty
- * state when no trips. Each row is a Link to /trips/[id].
+ * Slice 4.3 — adopts spec §9.1 sticky glass header + spec §4.2 typography
+ * tokens. Container width per spec §5 (max 1440px, margin tokens by
+ * breakpoint).
  *
- * `force-dynamic` is load-bearing — see trip-concierge-jv7 for the
- * future guard. Without it, Next.js 15's default RSC cache would
- * freeze the list state across renders, breaking the planning-state
- * UX (a just-submitted trip would render stale 'no_job' until the
- * route segment naturally invalidated).
- *
- * No try/catch on fetchTripList — v1.0a uses Next.js's default error
- * boundary. Future slices (4.3 polish, or trip-concierge-og1) can add
- * loading.tsx + error.tsx for explicit skeleton + retry UX.
+ * `force-dynamic` is load-bearing per slice 4.2's planning-state UX guard
+ * (see trip-concierge-jv7 for the build-time guard followup).
  */
 
 import Link from "next/link";
@@ -25,12 +19,10 @@ export const dynamic = "force-dynamic";
 
 export default async function TripsPage() {
   const session = await auth();
-  // Middleware enforces authenticated access to /trips/*. Session can
-  // only be missing here under a misconfigured deploy.
   if (!session?.user?.id) {
     return (
-      <main className="max-w-3xl mx-auto p-6">
-        <p className="text-slate-600">Sign-in required.</p>
+      <main className="mx-auto max-w-3xl p-6">
+        <p className="text-on-surface-variant">Sign-in required.</p>
       </main>
     );
   }
@@ -38,30 +30,39 @@ export default async function TripsPage() {
   const items = await fetchTripList({ userId: session.user.id });
 
   return (
-    <main className="max-w-3xl mx-auto p-6">
-      <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Your trips</h1>
+    <>
+      <header className="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
+        <nav className="mx-auto flex h-20 max-w-[1440px] items-center justify-between px-4 md:px-8 lg:px-16">
+          <Link href="/" className="text-label-md text-on-surface hover:text-primary">
+            Trip Concierge
+          </Link>
+        </nav>
       </header>
-      {items.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center">
-          <p className="text-slate-700 font-medium">No trips yet.</p>
-          <p className="text-sm text-slate-600 mt-2">
-            Plan your first trip from Claude Desktop, or{" "}
-            <Link href="/" className="underline">
-              return home
-            </Link>
-            .
-          </p>
+      <main className="mx-auto max-w-[1440px] px-4 pt-28 md:px-8 lg:px-16">
+        <div className="mb-8 flex items-baseline justify-between">
+          <h1 className="text-headline-md text-on-surface md:text-headline-lg">Your trips</h1>
         </div>
-      ) : (
-        <ul className="space-y-3">
-          {items.map((item) => (
-            <li key={item.id}>
-              <TripListRow item={item} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
+        {items.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-outline-variant p-8 text-center bg-surface-container-lowest">
+            <p className="text-body-lg text-on-surface font-medium">No trips yet.</p>
+            <p className="mt-2 text-body-md text-on-surface-variant">
+              Plan your first trip from Claude Desktop, or{" "}
+              <Link href="/" className="text-primary underline">
+                return home
+              </Link>
+              .
+            </p>
+          </div>
+        ) : (
+          <ul className="space-y-4">
+            {items.map((item) => (
+              <li key={item.id}>
+                <TripListRow item={item} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </main>
+    </>
   );
 }

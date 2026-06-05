@@ -289,6 +289,11 @@ async def get_plan_status(trip_id: uuid.UUID, db: SessionDep) -> PlanStatus:
         started_at=job_run.started_at.isoformat() if job_run.started_at else None,
         finished_at=job_run.finished_at.isoformat() if job_run.finished_at else None,
         trip_url=f"/trips/{trip_id}",
+        # Slice 4.3 — PWA detail page 'How this plan was made' panel reads
+        # this. Empty list on pre-qek-a JobRuns (column server_default='[]');
+        # populated by the worker's step_callback on jobs that ran with
+        # observability wired.
+        agent_summary=job_run.agent_summary,
     )
 
 

@@ -1,25 +1,25 @@
 /**
- * /trips/[id] — trip detail page with 3-state branch.
+ * /trips/[id] — trip detail page with two-column layout (spec §9.2).
  *
- * Slice 4.2. RSC: auth() → fetchTripDetail(userId, tripId), then
- * branches on planStatus.state:
+ * Slice 4.3. RSC: auth() → fetchTripDetail(userId, tripId), then
+ * branches on planStatus.state. Right column on md+ is sticky: holds
+ * the day-chip timeline + 'How this plan was made' panel.
  *
- *   planning (queued | running | cancelling) → progress message + back link
- *   succeeded (done + approved=true)         → day-by-day blocks
- *   failed   (done+approved=false | failed |
- *             cancelled | no_job)            → error message + back link
+ * Plan again wiring (Q9): failed-only. <PlanAgainDialog /> is rendered
+ * only when isFailed; passes planAgainAction from web/lib/actions.ts.
  *
- * `force-dynamic` is load-bearing for the planning state — see
- * tests/trip-detail.test.tsx assertion + trip-concierge-jv7.
- *
- * Like the list page, no try/catch — Next.js's default error boundary
- * surfaces fetchTripDetail throws (404, 403, 5xx).
+ * `force-dynamic` pinned per slice 4.2 — the planning state UX requires
+ * fresh fetches per render (no caching across renders).
  */
 
 import Link from "next/link";
 
 import { auth } from "@/auth";
+import { DayChipTimeline } from "@/components/day-chip-timeline";
+import { PlanAgainDialog } from "@/components/plan-again-dialog";
+import { PlanHistoryPanel } from "@/components/plan-history-panel";
 import { TripDay } from "@/components/trip-day";
+import { planAgainAction } from "@/lib/actions";
 import { fetchTripDetail, type PlanStatus } from "@/lib/backend";
 
 export const dynamic = "force-dynamic";
@@ -51,80 +51,106 @@ export default async function TripDetailPage({ params }: DetailPageProps) {
   const session = await auth();
   if (!session?.user?.id) {
     return (
-      <main className="max-w-3xl mx-auto p-6">
-        <p className="text-slate-600">Sign-in required.</p>
+      <main className="mx-auto max-w-3xl p-6">
+        <p className="text-on-surface-variant">Sign-in required.</p>
       </main>
     );
   }
 
-  const { trip, planStatus } = await fetchTripDetail({
-    userId: session.user.id,
-    tripId,
-  });
+  const userId = session.user.id;
+  const { trip, planStatus } = await fetchTripDetail({ userId, tripId });
 
   const isPlanning = _PLANNING_STATES.includes(planStatus.state);
   const isFailed = _isFailedState(planStatus);
   const isSucceeded = _isSucceededState(planStatus);
+  const agentSummary = planStatus.agent_summary ?? [];
 
   return (
-    <main className="max-w-3xl mx-auto p-6">
-      <header className="mb-6">
-        <Link href="/trips" className="text-sm text-slate-600 underline">
-          ← All trips
-        </Link>
-        <h1 className="text-2xl font-semibold mt-2">{trip.destination}</h1>
+    <>
+      <header className="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
+        <nav className="mx-auto flex h-20 max-w-[1440px] items-center justify-between px-4 md:px-8 lg:px-16">
+          <Link href="/trips" className="text-label-md text-on-surface hover:text-primary">
+            ← All trips
+          </Link>
+        </nav>
       </header>
+      <main className="mx-auto max-w-[1440px] px-4 pt-28 pb-12 md:px-8 lg:px-16">
+        <h1 className="mb-8 text-headline-md text-on-surface md:text-headline-lg">
+          {trip.destination}
+        </h1>
 
-      {isPlanning && (
-        <section className="rounded-lg border border-amber-200 bg-amber-50 p-6">
-          <p className="font-medium text-amber-900">Your trip is being planned.</p>
-          {_progressLine(planStatus) && (
-            <p className="text-sm text-amber-800 mt-2">{_progressLine(planStatus)}</p>
-          )}
-          <p className="text-sm text-amber-800 mt-2">Check back in a few minutes.</p>
-        </section>
-      )}
+        <div className="grid grid-cols-12 gap-6 items-start">
+          {/* === Left column (primary content) === */}
+          <div className="col-span-12 md:col-span-8 space-y-8">
+            {isPlanning && (
+              <section className="rounded-xl border border-outline-variant bg-primary-fixed-dim/10 p-6">
+                <p className="text-label-md text-on-primary-fixed-variant">
+                  Your trip is being planned.
+                </p>
+                {_progressLine(planStatus) && (
+                  <p className="mt-2 text-body-md text-on-surface">{_progressLine(planStatus)}</p>
+                )}
+                <p className="mt-2 text-body-md text-on-surface-variant">
+                  Check back in a few minutes.
+                </p>
+              </section>
+            )}
 
-      {isFailed && (
-        <section className="rounded-lg border border-rose-200 bg-rose-50 p-6">
-          <p className="font-medium text-rose-900">This trip didn't generate.</p>
-          {planStatus.error && <p className="text-sm text-rose-800 mt-2">{planStatus.error}</p>}
-          <p className="text-sm text-rose-800 mt-4">
-            <Link href="/trips" className="underline">
-              ← Back to all trips
-            </Link>
-          </p>
-        </section>
-      )}
+            {isFailed && (
+              <section className="rounded-xl border border-outline-variant bg-error-container/40 p-6">
+                <p className="text-label-md text-on-error-container">This trip didn't generate.</p>
+                {planStatus.error && (
+                  <p className="mt-2 text-body-md text-on-surface">{planStatus.error}</p>
+                )}
+                <div className="mt-4 flex flex-wrap items-center gap-4">
+                  <PlanAgainDialog
+                    tripId={tripId}
+                    action={
+                      planAgainAction.bind(null, tripId, userId) as unknown as (
+                        tripId: string,
+                      ) => Promise<void>
+                    }
+                  />
+                  <Link href="/trips" className="text-label-md text-primary underline">
+                    ← Back to all trips
+                  </Link>
+                </div>
+              </section>
+            )}
 
-      {isSucceeded && (
-        <section>
-          {trip.days.length === 0 ? (
-            <p className="text-slate-600 italic">
-              The plan was marked succeeded but has no days yet. This is an inconsistent state —
-              please refresh in a moment.
-            </p>
-          ) : (
-            trip.days.map((day) => <TripDay key={day.id} day={day} />)
-          )}
-        </section>
-      )}
+            {isSucceeded && (
+              <section>
+                {trip.days.length === 0 ? (
+                  <p className="text-body-md italic text-on-surface-variant">
+                    The plan was marked succeeded but has no days yet.
+                  </p>
+                ) : (
+                  trip.days.map((day) => <TripDay key={day.id} day={day} />)
+                )}
+              </section>
+            )}
 
-      {!isPlanning && !isFailed && !isSucceeded && (
-        // Genuinely-unplanned fallback. The active-job overlay in
-        // fetchTripDetail demotes most no_job cases to planning (live
-        // jobs in flight) or surfaces them as failed (job stalled and
-        // wrote a terminal row). What's left: worker crashed at enqueue
-        // before writing the Redis key, OR the Redis active_job TTL
-        // expired without a JobRun ever being written. Rare in practice
-        // but the surface must acknowledge it honestly.
-        <section className="rounded-lg border border-dashed border-slate-300 p-6 text-center">
-          <p className="text-slate-700 font-medium">This trip hasn't been planned yet.</p>
-          <p className="text-sm text-slate-600 mt-2">
-            Plan creation may have stalled. Try again from Claude Desktop.
-          </p>
-        </section>
-      )}
-    </main>
+            {!isPlanning && !isFailed && !isSucceeded && (
+              <section className="rounded-xl border border-dashed border-outline-variant p-6 text-center bg-surface-container-lowest">
+                <p className="text-body-lg text-on-surface font-medium">
+                  This trip hasn't been planned yet.
+                </p>
+                <p className="mt-2 text-body-md text-on-surface-variant">
+                  Plan creation may have stalled. Try again from Claude Desktop.
+                </p>
+              </section>
+            )}
+          </div>
+
+          {/* === Right column (sticky on md+) === */}
+          <aside className="col-span-12 md:col-span-4 md:sticky md:top-28 space-y-4">
+            {trip.days.length > 0 && (
+              <DayChipTimeline days={trip.days} currentDayId={trip.days[0]?.id} />
+            )}
+            {(isSucceeded || isFailed) && <PlanHistoryPanel agentSummary={agentSummary} />}
+          </aside>
+        </div>
+      </main>
+    </>
   );
 }

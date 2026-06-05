@@ -1,0 +1,170 @@
+<!-- My Profile (Desktop) -->
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>My Profile - Voyage Elite</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&amp;family=Be+Vietnam+Pro:wght@400;500;600&amp;family=Poppins:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-surface-variant": "#3e4949", "on-surface": "#191c1d",
+                    "surface-container-low": "#f3f4f5", "primary-container": "#008080",
+                    "on-primary-container": "#e3fffe", "primary-fixed-dim": "#76d6d5",
+                    "surface": "#f8f9fa", "on-primary": "#ffffff",
+                    "surface-container-high": "#e7e8e9", "secondary-container": "#fcd400",
+                    "outline": "#6e7979", "outline-variant": "#bdc9c8",
+                    "surface-variant": "#e1e3e4", "surface-container": "#edeeef",
+                    "surface-container-lowest": "#ffffff", "background": "#f8f9fa",
+                    "on-secondary-container": "#6e5c00", "primary": "#006565",
+                    "error": "#ba1a1a", "error-container": "#ffdad6",
+                    "secondary": "#705d00"
+            },
+            "borderRadius": { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+            "spacing": { "margin-desktop": "64px", "gutter": "24px", "container-max": "1440px" },
+            "fontFamily": { "body-md": ["Poppins"], "headline-lg": ["Montserrat"], "headline-md": ["Montserrat"], "label-md": ["Poppins"], "label-sm": ["Poppins"], "body-lg": ["Poppins"], "display-lg": ["Montserrat"] },
+            "fontSize": {
+                    "body-md": ["16px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                    "label-sm": ["12px", {"lineHeight": "1", "fontWeight": "500"}],
+                    "headline-lg": ["40px", {"lineHeight": "1.2", "fontWeight": "600"}],
+                    "headline-md": ["24px", {"lineHeight": "1.3", "fontWeight": "600"}],
+                    "label-md": ["14px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400; vertical-align: middle; }
+        body { font-family: 'Poppins', sans-serif; }
+        .editorial-shadow { box-shadow: 0px 8px 24px rgba(0, 128, 128, 0.04); }
+        .active-teal-glow { box-shadow: 0px 8px 24px rgba(0, 128, 128, 0.08); }
+    </style>
+</head>
+<body class="bg-surface text-on-surface">
+<header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
+<div class="flex justify-between items-center w-full px-margin-desktop max-w-container-max mx-auto h-20">
+<div class="flex items-center gap-12">
+<span class="font-headline-md text-headline-md font-bold text-primary">Voyage Elite</span>
+<nav class="hidden md:flex items-center gap-8">
+<a class="text-on-surface-variant hover:text-primary transition-colors font-label-md" href="#">Explore</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors font-label-md" href="#">My Trips</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors font-label-md" href="#">Bookings</a>
+</nav>
+</div>
+</div>
+</header>
+<main class="max-w-container-max mx-auto px-margin-desktop py-12 flex flex-col md:flex-row gap-12">
+<!-- Sidebar Navigation -->
+<aside class="w-full md:w-64 flex-shrink-0">
+<div class="flex flex-col gap-2">
+<div class="mb-8">
+<h2 class="font-label-md text-on-surface-variant uppercase tracking-widest mb-4">Account</h2>
+<nav class="flex flex-col gap-1">
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg bg-primary-container text-on-primary-container active-teal-glow transition-all" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">person</span>
+<span class="font-label-md">Personal Info</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-low transition-all" href="#">
+<span class="material-symbols-outlined">map</span>
+<span class="font-label-md">My Trips</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-low transition-all" href="#">
+<span class="material-symbols-outlined">folder_shared</span>
+<span class="font-label-md">Documents</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-low transition-all" href="#">
+<span class="material-symbols-outlined">payments</span>
+<span class="font-label-md">Payment Methods</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-low transition-all" href="#">
+<span class="material-symbols-outlined">security</span>
+<span class="font-label-md">Security</span>
+</a>
+</nav>
+</div>
+<div>
+<h2 class="font-label-md text-on-surface-variant uppercase tracking-widest mb-4">Preference</h2>
+<nav class="flex flex-col gap-1">
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-low transition-all" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-label-md">Settings</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-error hover:bg-error-container/10 transition-all" href="#">
+<span class="material-symbols-outlined">logout</span>
+<span class="font-label-md">Logout</span>
+</a>
+</nav>
+</div>
+</div>
+</aside>
+<!-- Content Area -->
+<div class="flex-1 min-w-0">
+<!-- Header Section -->
+<section class="mb-12 bg-surface-container-lowest p-8 rounded-xl editorial-shadow flex flex-col md:flex-row items-center justify-between gap-8">
+<div class="flex items-center gap-8">
+<div class="relative">
+<div class="w-32 h-32 rounded-full overflow-hidden border-4 border-primary/10">
+<img alt="User profile large" class="w-full h-full object-cover" src=""/>
+</div>
+<button class="absolute bottom-0 right-0 w-10 h-10 bg-primary text-on-primary rounded-full flex items-center justify-center border-4 border-surface-container-lowest hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-sm">edit</span>
+</button>
+</div>
+<div>
+<div class="flex items-center gap-3 mb-1">
+<h1 class="font-headline-md text-headline-md text-on-surface">Julian Alexander</h1>
+<span class="px-3 py-1 rounded-full bg-primary-container/10 text-primary font-label-sm flex items-center gap-1">
+<span class="material-symbols-outlined text-base" style="font-variation-settings: 'FILL' 1;">verified</span>
+                                Gold Member
+                            </span>
+</div>
+<p class="font-body-md text-on-surface-variant mb-4">Elite Traveler since 2021 • 14 Destinations Explored</p>
+</div>
+</div>
+</section>
+<!-- Saved Trips Grid -->
+<section class="mb-12">
+<div class="flex items-center justify-between mb-6">
+<h3 class="font-headline-md text-headline-md text-on-surface">Saved Trips</h3>
+<a class="text-primary font-label-md flex items-center gap-1 hover:underline" href="#">
+                        View All <span class="material-symbols-outlined text-base">arrow_forward</span>
+</a>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-gutter">
+<!-- Card 1 -->
+<div class="bg-surface-container-lowest rounded-xl overflow-hidden border border-outline-variant group hover:active-teal-glow transition-all cursor-pointer">
+<div class="h-48 relative">
+<img alt="Amalfi Coast" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" src=""/>
+<div class="absolute top-4 right-4 bg-surface-container-lowest/90 backdrop-blur-md p-2 rounded-full text-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">favorite</span>
+</div>
+</div>
+<div class="p-6">
+<div class="flex justify-between items-start mb-2">
+<h4 class="font-headline-md text-lg font-bold text-on-surface">Positano Coastline Escape</h4>
+<span class="text-primary font-bold">$4,200</span>
+</div>
+<div class="flex items-center gap-4 font-label-sm text-on-surface-variant mb-4">
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-base">calendar_today</span> 7 Days</span>
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-base">person</span> 2 Adults</span>
+</div>
+<div class="flex gap-2">
+<span class="px-3 py-1 bg-primary/5 text-primary rounded-full text-[10px] font-bold uppercase tracking-wider">Luxury</span>
+<span class="px-3 py-1 bg-primary/5 text-primary rounded-full text-[10px] font-bold uppercase tracking-wider">Coastal</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+</body></html>

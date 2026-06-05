@@ -116,9 +116,11 @@ describe("/trips/[id] detail page", () => {
     render(await Page({ params: Promise.resolve({ id: "trip-1" }) }));
 
     expect(screen.getByText(/Tata Coffee Plantation/)).toBeDefined();
-    expect(screen.getByText(/Arrival \+ coffee plantation tour/)).toBeDefined();
-    // The Day header surfaces "Day 1" somewhere.
-    expect(screen.getByText(/Day 1/)).toBeDefined();
+    // Summary may appear in both the left-column TripDay header AND the
+    // right-column day-chip timeline. Loose match.
+    expect(screen.getAllByText(/Arrival \+ coffee plantation tour/).length).toBeGreaterThan(0);
+    // "Day 1" appears in the day header + the right-column chip — getAllByText.
+    expect(screen.getAllByText(/Day 1/).length).toBeGreaterThan(0);
   });
 
   it("branches to FAILED surface with error message + back-to-list link", async () => {
@@ -152,6 +154,55 @@ describe("/trips/[id] detail page", () => {
     for (const link of backLinks) {
       expect(link.getAttribute("href")).toBe("/trips");
     }
+  });
+
+  it("renders <PlanAgainDialog /> on the FAILED branch", async () => {
+    // Slice 4.3 wires Q9: Plan again is failed-only. The component is
+    // imported and rendered when isFailed is true; succeeded/planning/
+    // no_job branches must NOT include it.
+    const backend = await import("@/lib/backend");
+    (backend.fetchTripDetail as ReturnType<typeof vi.fn>).mockResolvedValue({
+      trip: { ..._TRIP_BASE, days: [] },
+      planStatus: {
+        state: "failed",
+        approved: null,
+        job_id: "job-failed",
+        kind: "plan",
+        error: "FatalJobError",
+        agent_summary: [],
+      },
+    });
+
+    const Page = (await import("@/app/trips/[id]/page")).default;
+    render(await Page({ params: Promise.resolve({ id: "trip-1" }) }));
+
+    expect(screen.getByRole("button", { name: /plan again/i })).toBeDefined();
+  });
+
+  it("renders agent_summary via <PlanHistoryPanel /> on succeeded branch", async () => {
+    // Slice 4.3 — PRD §F8 partial. The sticky right panel includes the
+    // 'How this plan was made' surface, sourced from planStatus.agent_summary.
+    const backend = await import("@/lib/backend");
+    (backend.fetchTripDetail as ReturnType<typeof vi.fn>).mockResolvedValue({
+      trip: { ..._TRIP_BASE, days: [] },
+      planStatus: {
+        state: "done",
+        approved: true,
+        job_id: "job-ok",
+        kind: "plan",
+        agent_summary: [{ agent: "Researcher", step: 1, duration_ms: 32500, tokens: 1840 }],
+      },
+    });
+
+    const Page = (await import("@/app/trips/[id]/page")).default;
+    render(await Page({ params: Promise.resolve({ id: "trip-1" }) }));
+
+    // PlanHistoryPanel header surface.
+    expect(screen.getByText(/how this plan was made/i)).toBeDefined();
+    // Agent row visible (the panel renders agents inline; if a future change
+    // collapses by default the test would need adjustment but the assertion
+    // confirms the surface exists at the page level).
+    expect(screen.getByText(/Researcher/)).toBeDefined();
   });
 
   it("renders the no_job fallback section when planStatus.state === 'no_job'", async () => {

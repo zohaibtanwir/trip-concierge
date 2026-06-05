@@ -6,7 +6,17 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["app/**", "lib/**", "tests/**", "*.ts", "*.tsx", "*.mjs", "*.json"]
+    "includes": [
+      "app/**",
+      "components/**",
+      "lib/**",
+      "tests/**",
+      "*.ts",
+      "*.tsx",
+      "*.mjs",
+      "*.json",
+      "!app/globals.css"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -25,6 +35,11 @@
       "quoteStyle": "double",
       "semicolons": "always",
       "trailingCommas": "all"
+    }
+  },
+  "css": {
+    "parser": {
+      "cssModules": false
     }
   }
 }
