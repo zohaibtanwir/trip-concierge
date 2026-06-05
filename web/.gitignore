@@ -6,3 +6,7 @@ out/
 
 # Node / pnpm
 node_modules/
+
+# Playwright artifacts — local-only (traces on failure, screenshots)
+test-results/
+playwright-report/
