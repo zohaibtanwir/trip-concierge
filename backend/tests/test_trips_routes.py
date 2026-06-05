@@ -4,9 +4,10 @@ Slice 3.2: POST /trips now requires auth and derives user_id from the
 JWT. user_id is no longer accepted in the request body — the column
 exists on the model but it's set server-side.
 
-GET /trips/{trip_id} remains open in this slice (slice 4.x will lock
-down by ownership). The 404 test for GET stays on the unauthenticated
-`client` fixture for that reason.
+Slice 4.2 (trip-concierge-2th): GET /trips/{id} now requires auth +
+ownership. The 404-when-missing test uses `authed_client` because an
+unauthenticated caller short-circuits to 401 before the route-handler
+runs. Cross-user 403 is covered separately in test_trip_ownership.py.
 """
 
 from __future__ import annotations
@@ -111,6 +112,13 @@ def test_post_trip_ignores_user_id_in_body(
     assert body["user_id"] == str(user.id), "body-supplied user_id must not override JWT subject"
 
 
-def test_get_trip_returns_404_when_missing(client: TestClient) -> None:
+def test_get_trip_returns_404_when_missing(
+    authed_client: tuple[TestClient, User],
+) -> None:
+    """Authenticated request for a trip_id that doesn't exist returns 404.
+    The 401 path (unauth) is covered above; the 403 path (cross-user) is
+    covered in test_trip_ownership.py.
+    """
+    client, _ = authed_client
     resp = client.get(f"/trips/{uuid.uuid4()}")
     assert resp.status_code == 404

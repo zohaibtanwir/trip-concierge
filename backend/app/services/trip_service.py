@@ -2,21 +2,30 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from datetime import date as date_type
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete, select
+from arq import create_pool
+from arq.connections import RedisSettings
+from sqlalchemy import case, delete, select, true
 from sqlalchemy.orm import Session, selectinload
 
+from app.config import settings
 from app.models.block import Block
 from app.models.day import Day
+from app.models.job_run import JobRun
 from app.models.source import Source
 from app.models.trip import Trip
 from app.models.user_source import UserSource
 from app.schemas.trip import TripCreate
+
+logger = logging.getLogger(__name__)
+
+_LIST_TRIPS_LIMIT = 50
 
 
 def create_trip(db: Session, payload: TripCreate, *, user_id: uuid.UUID) -> Trip:
@@ -35,6 +44,147 @@ def create_trip(db: Session, payload: TripCreate, *, user_id: uuid.UUID) -> Trip
 
 def get_trip(db: Session, trip_id: uuid.UUID) -> Trip | None:
     return db.get(Trip, trip_id)
+
+
+async def _planning_trip_ids(
+    trip_ids: list[uuid.UUID],
+    redis: Any,
+) -> set[uuid.UUID]:
+    """Subset of trip_ids that have a Redis active_job key set.
+
+    Single MGET round-trip regardless of N. Returns trip_ids whose
+    `trip:{id}:active_job` key is non-None (i.e. a planning/refine/regen
+    job is in flight). Empty input returns the empty set without touching
+    Redis.
+
+    Graceful degradation: on ConnectionError, TimeoutError, or any other
+    Redis exception the helper logs a warning and returns the empty set.
+    Callers see the same result as "no active jobs found" — affected
+    trips fall through to derived state 'no_job', which is the same
+    state they'd carry if Redis were never consulted. This keeps the
+    list endpoint up under a Redis outage; the cost is a temporary loss
+    of the 'planning' badge until Redis recovers.
+
+    Accepts the Redis client via parameter (not module-level) so tests
+    can inject a mock without patching create_pool.
+    """
+    if not trip_ids:
+        return set()
+    keys = [f"trip:{tid}:active_job" for tid in trip_ids]
+    try:
+        values = await redis.mget(keys)
+    except Exception as e:  # noqa: BLE001 — graceful-degradation by design
+        logger.warning(
+            "redis mget failed for trip-list planning-state check; "
+            "treating affected trips as no_job. error_class=%s",
+            type(e).__name__,
+        )
+        return set()
+    return {tid for tid, value in zip(trip_ids, values, strict=True) if value is not None}
+
+
+async def list_trips_for_user(db: Session, *, user_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Return a user's trips with derived `state` per slice 4.2.
+
+    Two stores compose the derived state:
+
+      1. Postgres LATERAL JOIN — terminal state from the latest plan-kind
+         JobRun row.
+      2. Redis MGET — 'planning' overlay for trips with no terminal
+         JobRun but an active_job key present (queued/running phase, not
+         yet persisted to Postgres).
+
+    SQL shape (step 1):
+
+        SELECT trips.*,
+               CASE WHEN lp.status = 'succeeded' THEN 'succeeded'
+                    WHEN lp.status IN ('failed','cancelled') THEN 'failed'
+                    ELSE 'no_job'
+               END AS state
+        FROM trips
+        LEFT JOIN LATERAL (
+            SELECT status
+            FROM job_runs
+            WHERE trip_id = trips.id AND kind = 'plan'
+            ORDER BY created_at DESC
+            LIMIT 1
+        ) lp ON TRUE
+        WHERE trips.user_id = :user_id
+        ORDER BY trips.created_at DESC
+        LIMIT 50;
+
+    The LATERAL subquery's WHERE references the outer Trip.id — that's
+    what makes it LATERAL. LEFT JOIN (not INNER) keeps trips with no
+    JobRun in the result set (state='no_job'). The kind='plan' filter is
+    load-bearing: refine and regen JobRuns must not influence the trip's
+    list-page state.
+
+    Step 2 (Redis MGET) is narrowed to only the trips where step 1
+    derived state='no_job' — succeeded/failed trips with an active
+    refine/regen are intentionally NOT promoted to 'planning' (the plan
+    state is the surface here; refine progress lives on the detail page).
+
+    Why two stores: JobRun.status is terminal-only by design (worker
+    writes one row on succeeded|failed|cancelled). 'queued'/'running'
+    state lives in Redis. The list page needs all four UX states to
+    avoid confusing UX on a just-submitted trip ("Not started" badge
+    when planning is actually in flight). See `trip-concierge-hia` for
+    the long-term schema fix that eliminates this dual-read.
+
+    Returns plain dicts (not ORM rows) because the SELECT emits a
+    derived column the ORM doesn't own. Trade-off accepted: routes
+    layer turns each dict into a TripListItem via Pydantic.
+    """
+    latest_plan = (
+        select(JobRun.status.label("status"))
+        .where(JobRun.trip_id == Trip.id, JobRun.kind == "plan")
+        .order_by(JobRun.created_at.desc())
+        .limit(1)
+        .lateral("latest_plan")
+    )
+
+    state_col = case(
+        (latest_plan.c.status == "succeeded", "succeeded"),
+        (latest_plan.c.status.in_(["failed", "cancelled"]), "failed"),
+        else_="no_job",
+    ).label("state")
+
+    stmt = (
+        select(Trip, state_col)
+        .outerjoin(latest_plan, true())
+        .where(Trip.user_id == user_id)
+        .order_by(Trip.created_at.desc())
+        .limit(_LIST_TRIPS_LIMIT)
+    )
+
+    # Materialize the rows since we iterate twice (once for the
+    # no_job-narrowing, once for the final dict comprehension).
+    rows = db.execute(stmt).all()
+
+    # Narrow the Redis MGET to only the no_job trips. The 'planning'
+    # overlay applies only when SQL didn't already give us a terminal
+    # state. This both reduces Redis key fan-out and encodes the policy
+    # that succeeded/failed trips with an active refine are NOT shown as
+    # 'planning' in the list.
+    no_job_trip_ids = [trip.id for trip, state in rows if state == "no_job"]
+    planning_ids: set[uuid.UUID] = set()
+    if no_job_trip_ids:
+        redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        planning_ids = await _planning_trip_ids(no_job_trip_ids, redis)
+
+    return [
+        {
+            "id": trip.id,
+            "destination": trip.destination,
+            "start_date": trip.start_date,
+            "end_date": trip.end_date,
+            "currency": trip.currency,
+            "budget_total": trip.budget_total,
+            "state": ("planning" if (state == "no_job" and trip.id in planning_ids) else state),
+            "created_at": trip.created_at,
+        }
+        for trip, state in rows
+    ]
 
 
 def persist_regenerated_day(

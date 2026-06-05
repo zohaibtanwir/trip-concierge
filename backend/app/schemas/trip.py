@@ -66,3 +66,42 @@ class TripFullRead(TripRead):
     """
 
     days: list[DayRead] = []
+
+
+class TripListItem(BaseModel):
+    """One row in the trip list (GET /trips).
+
+    Slimmer than TripRead: drops user_id (caller already knows whose list
+    this is), constraints (not rendered on list cards), group_size + pace
+    (detail-page concerns), status (the dead-column-since-1.x). Adds the
+    derived `state` composed via Postgres + Redis dual-read per slice 4.2.
+
+    state ∈ {'succeeded', 'failed', 'planning', 'no_job'}:
+      - 'succeeded' / 'failed' from latest plan-kind JobRun (Postgres)
+      - 'planning' from Redis active_job key (queued/running phase)
+      - 'no_job' otherwise
+
+    See trip_service.list_trips_for_user for the composition rule.
+    Long-term elimination of the dual-read tracked as trip-concierge-hia.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    destination: str
+    start_date: date | None
+    end_date: date | None
+    currency: str
+    budget_total: Decimal | None
+    state: str
+    created_at: datetime
+
+
+class TripListResponse(BaseModel):
+    """GET /trips response envelope.
+
+    Wrapping the array gives room to add metadata (next_cursor, total) in
+    the future without a breaking schema change.
+    """
+
+    items: list[TripListItem]
