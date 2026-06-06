@@ -90,6 +90,12 @@ def test_refine_returns_early_when_first_pass_approves() -> None:
     approved_result = _mock_crew_result(_audited(True, ["initial refine accepted"]))
 
     with (
+        # _build_refine_crew constructs a hierarchical Crew which
+        # CrewAI validates requires manager_llm. On CI, ANTHROPIC_API_KEY
+        # is unset so build_llm() returns None and the Crew validator
+        # would raise — even though _kickoff_with_loop is mocked. Patch
+        # the crew builder too so construction never happens.
+        patch.object(crew_mod, "_build_refine_crew", return_value=MagicMock()),
         patch.object(crew_mod, "_kickoff_with_loop", return_value=approved_result) as kickoff,
         patch.object(crew_mod, "_run_refine_audit_pass") as audit_pass,
     ):
@@ -110,6 +116,7 @@ def test_refine_runs_one_audit_pass_when_first_pass_fails_then_approves() -> Non
     approved_audit = _audited(True, ["compressed day 2"])
 
     with (
+        patch.object(crew_mod, "_build_refine_crew", return_value=MagicMock()),
         patch.object(crew_mod, "_kickoff_with_loop", return_value=failed_result),
         patch.object(crew_mod, "_run_refine_audit_pass", return_value=approved_audit),
     ):
@@ -145,6 +152,7 @@ def test_refine_caps_at_max_refine_audit_passes() -> None:
         )
 
     with (
+        patch.object(crew_mod, "_build_refine_crew", return_value=MagicMock()),
         patch.object(crew_mod, "_kickoff_with_loop", return_value=failed_result),
         patch.object(crew_mod, "_run_refine_audit_pass", side_effect=always_fail),
     ):
@@ -165,6 +173,7 @@ def test_refine_revision_log_concat_uses_pass_prefix() -> None:
     pass_2 = _audited(True, ["swap restaurant"])
 
     with (
+        patch.object(crew_mod, "_build_refine_crew", return_value=MagicMock()),
         patch.object(crew_mod, "_kickoff_with_loop", return_value=failed_result),
         patch.object(crew_mod, "_run_refine_audit_pass", side_effect=[pass_1, pass_2]),
     ):
@@ -202,6 +211,7 @@ def test_refine_passes_constraints_to_audit_pass(constraints_summary: dict) -> N
         return _audited(True, ["done"])
 
     with (
+        patch.object(crew_mod, "_build_refine_crew", return_value=MagicMock()),
         patch.object(crew_mod, "_kickoff_with_loop", return_value=failed_result),
         patch.object(crew_mod, "_run_refine_audit_pass", side_effect=capture_call),
     ):
