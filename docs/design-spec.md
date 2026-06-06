@@ -539,6 +539,98 @@ consecutive blocks, "Today" mode, tap-pin-to-scroll itinerary.
 
 ---
 
+### 9.13 Constraint panel + read-only chip list (right rail)
+
+Added in v1.0.2 (slice 4.5). Used on trip detail pages
+(`/trips/[id]`) to surface PRD §F4 constraint controls (hard, not
+soft). Two stacked components, both in the right aside:
+
+1. **ConstraintPanel** — interactive editor.
+2. **ConstraintList** — read-only chip view of `trip.constraints.rules[]`.
+
+**Placement:** Right column, below TripMap (§9.12), above
+PlanHistoryPanel. Order: DayChipTimeline → TripMap → ConstraintPanel →
+ConstraintList → PlanHistoryPanel. Visible on succeeded + failed trip
+states only.
+
+**Responsive variants (ConstraintPanel):**
+
+- `inline` (desktop default in v1.0a): rounded-xl border container,
+  `bg-surface-container-lowest`, all four form sections rendered
+  inline. h2 label "Constraints" at `text-label-md`.
+- `sheet` (mobile, v1.0a-companion): trigger button "Edit
+  constraints" (outline variant) opens a bottom Sheet (§17.3) with
+  the same form contents under a `text-headline-md` heading.
+
+`forceVariant` prop pins each variant in jsdom tests (mirror of §17.4
+BlockExpand pattern). Production page currently passes
+`forceVariant="inline"` — a `useMediaQuery` hook to resolve at runtime
+is tracked as P3 ticket `trip-concierge-5gf`.
+
+**v1.0a form sections (in order):**
+
+| Section | Control | Multi? | Wire kind |
+|---|---|---|---|
+| Dietary | Chip group, `aria-pressed` | yes (joined with `, `) | `dietary` |
+| Mobility | Radio group | no | `mobility` |
+| Accessibility | Single checkbox toggle | no | `accessibility` |
+| No-go | Text input + Add button + removable chip list | yes (one POST per entry) | `no_go` |
+
+**Deferred to v1.0a-companion slice (`trip-concierge-cdr`):**
+Pace slider, total + per-day budget caps, walking-distance slider.
+These three controls require backend endpoints that don't exist yet
+(slice 3.4a's `POST /trips/{id}/constraints` accepts the six
+ConstraintKind values above + `walking_limit` and `budget`, but the
+LLM-facing prompts and Budget Auditor enforcement logic for caps
+aren't wired). v1.0a ships the visual + functional surface for the
+four already-supported kinds — explicit PRD §F4 partial-compliance.
+
+**Submit semantics:**
+- Button label: "Save and re-plan" / "Saving…" during pending state.
+- Helper text below: "Your existing plan will be replaced with one
+  that respects these constraints (~5-10 minutes)."
+- Each non-empty section becomes one POST. Submitting more than one
+  section in a single click sends sequential POSTs; the second one
+  may surface a 409 (active job conflict) — correct UX in v1.0a, one
+  constraint per refine cycle is the supported workflow.
+
+**ConstraintList chip styling:**
+- `flex flex-wrap gap-2` ul.
+- Each chip: rounded-full, `bg-surface-container-high`, `text-xs`,
+  flex with a Material Symbols icon (`text-base text-primary`,
+  `aria-hidden`) and the rule's `value` string.
+- **Read-only by design in v1.0a.** No remove button. DELETE
+  constraint endpoint is deferred (P3 ticket
+  `trip-concierge-hr2`).
+- Empty state: italic body-md "No constraints added yet."
+
+**Per-kind icon mapping (Material Symbols):**
+
+| Kind | Icon |
+|---|---|
+| `dietary` | `restaurant` |
+| `mobility` | `directions_walk` |
+| `no_go` | `block` |
+| `accessibility` | `accessible` |
+| `walking_limit` | `directions_walk` |
+| `budget` | `payments` |
+| `custom` / unknown | `label` |
+
+When new kinds land in the v1.0a-companion slice, update both the
+mapping in `web/components/constraint-list.tsx` AND the table above.
+
+```tsx
+<ConstraintPanel
+  tripId={trip.id}
+  userId={session.user.id}
+  existingRules={trip.constraints?.rules ?? []}
+  forceVariant="inline"
+/>
+<ConstraintList rules={trip.constraints?.rules ?? []} />
+```
+
+---
+
 ## 10. Dark mode
 
 **Deferred to Phase 5.** v1.0a ships light mode only.
@@ -862,7 +954,27 @@ This isn't a behavior change — slice 4.3's animations are correct per §11's i
 
 ---
 
+### 17.12 Constraint controls — partial PRD §F4 coverage in v1.0a
+
+Slice 4.5 ships the visual + functional surface for **four of seven** PRD §F4 acceptance bullets:
+
+- ✅ Dietary tags (multi-select)
+- ✅ Mobility (active / standard / walking-distance only / no-stairs)
+- ✅ Accessibility flag
+- ✅ No-go list (free-text)
+- ⏳ Total budget cap (deferred — `trip-concierge-cdr`)
+- ⏳ Per-day budget cap (deferred — `trip-concierge-cdr`)
+- ⏳ Max walking distance per day (deferred — `trip-concierge-cdr`)
+- ⏳ Pace slider (deferred — `trip-concierge-cdr`)
+
+The deferral isn't a UI gap — it's a wiring gap. The Budget Auditor agent enforcement loop (PRD §F4 bullet 2: "validates the full itinerary against caps before output is finalized; if exceeded, plan is sent back for revision") needs a backend endpoint surface for cap state and a per-day budget pass in `crew.py`. Adding chip controls without the enforcement loop would lie to the user — the constraint would render but not bind. v1.0a-companion (`4.5b`) lands the three cap controls together with the auditor wiring.
+
+v1.1 should converge the §F4 controls into a single section here once the auditor loop ships and the 7-bullet surface is complete. Until then, the partial-compliance framing belongs in BUILD_PLAN and in the Marsh demo narrative.
+
+---
+
 ## Changelog
 
+- **v1.0.2** (2026-06-06) — Added §9.13 (Constraint panel + read-only chip list) and §17.12 (PRD §F4 partial-coverage rationale) from slice 4.5. Additive only — no breaking changes to existing tokens or patterns.
 - **v1.0.1** (2026-06-05) — Added §9.12 (Map panel, right rail) and §17.11 (pin-less → pinned migration v1.1 prep notes) from slice 4.4. Additive only — no breaking changes to existing tokens or patterns.
 - **v1.0** (2026-06-05) — Initial spec. Derived from Voyage Elite reference during slice 4.3 design dialogue. Trip Concierge brand framing established (thinking-tool, not marketplace). All tokens, patterns, and copy guidance defined.

@@ -15,6 +15,8 @@
 import Link from "next/link";
 
 import { auth } from "@/auth";
+import { ConstraintList } from "@/components/constraint-list";
+import { ConstraintPanel } from "@/components/constraint-panel";
 import { DayChipTimeline } from "@/components/day-chip-timeline";
 import { PlanAgainDialog } from "@/components/plan-again-dialog";
 import { PlanHistoryPanel } from "@/components/plan-history-panel";
@@ -144,18 +146,43 @@ export default async function TripDetailPage({ params }: DetailPageProps) {
           </div>
 
           {/* === Right column (sticky on md+) ===
-              Stack order (spec §9.2 + §9.12 from slice 4.4):
-                DayChipTimeline → TripMap → PlanHistoryPanel
-              TripMap visible on succeeded + failed states only
-              (same visibility as PlanHistoryPanel); planning state
-              shows the in-progress section in the left column with
-              no right-rail map. */}
+              Stack order (spec §9.2 + §9.12 from slice 4.4 + §9.13
+              from slice 4.5):
+                DayChipTimeline → TripMap → ConstraintPanel →
+                ConstraintList → PlanHistoryPanel
+              All five visible on succeeded + failed states only;
+              planning state shows the in-progress section in the
+              left column with no right-rail tooling. */}
           <aside className="col-span-12 md:col-span-4 md:sticky md:top-28 space-y-4">
             {trip.days.length > 0 && (
               <DayChipTimeline days={trip.days} currentDayId={trip.days[0]?.id} />
             )}
             {(isSucceeded || isFailed) && (
               <TripMap destination={trip.destination} dayCount={trip.days.length} />
+            )}
+            {(isSucceeded || isFailed) && (
+              <ConstraintPanel
+                tripId={tripId}
+                userId={userId}
+                existingRules={
+                  (
+                    trip.constraints as {
+                      rules?: Array<{ kind: string; value: string; raw_text: string }>;
+                    }
+                  )?.rules ?? []
+                }
+              />
+            )}
+            {(isSucceeded || isFailed) && (
+              <ConstraintList
+                rules={
+                  (
+                    trip.constraints as {
+                      rules?: Array<{ kind: string; value: string; raw_text: string }>;
+                    }
+                  )?.rules ?? []
+                }
+              />
             )}
             {(isSucceeded || isFailed) && <PlanHistoryPanel agentSummary={agentSummary} />}
           </aside>

@@ -73,3 +73,61 @@ describe("planAgainAction", () => {
     await expect(planAgainAction("trip-missing", "user-abc")).rejects.toThrow(/404/);
   });
 });
+
+describe("addConstraintAction", () => {
+  it("mints token + POSTs /trips/{id}/constraints with kind + text body, returns parsed response", async () => {
+    // Slice 4.5 first object-args Server Action (sets precedent for u8v
+    // refactor of planAgainAction). Calls existing backend route from
+    // slice 3.4a which appends to Trip.constraints['rules'] + auto-
+    // enqueues a refine job. Response shape: {job_id, status_url}.
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({ mcp_token: "jwt-constraint", expires_at: "2026-09-03T00:00:00Z" }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({
+        job_id: "refine-new-xyz",
+        status_url: "/trips/trip-1/plan/status",
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { addConstraintAction } = await import("@/lib/actions");
+    const result = await addConstraintAction({
+      tripId: "trip-1",
+      userId: "user-abc",
+      kind: "dietary",
+      text: "vegetarian",
+    });
+
+    expect(result.job_id).toBe("refine-new-xyz");
+    expect(result.status_url).toBe("/trips/trip-1/plan/status");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [postUrl, postInit] = fetchMock.mock.calls[1];
+    expect(postUrl).toBe("http://test-backend/trips/trip-1/constraints");
+    expect(postInit?.method).toBe("POST");
+    expect((postInit?.headers as Record<string, string>)["x-tc-token"]).toBe("jwt-constraint");
+    expect(JSON.parse(postInit?.body as string)).toEqual({
+      constraint_text: "vegetarian",
+      constraint_kind: "dietary",
+    });
+  });
+
+  it("throws BackendError on 403 (ownership mismatch propagates from backend)", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(new Response("forbidden", { status: 403 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { addConstraintAction } = await import("@/lib/actions");
+    await expect(
+      addConstraintAction({
+        tripId: "other-user-trip",
+        userId: "user-abc",
+        kind: "dietary",
+        text: "vegetarian",
+      }),
+    ).rejects.toThrow(/403/);
+  });
+});

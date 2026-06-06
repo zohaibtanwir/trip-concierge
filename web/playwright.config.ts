@@ -31,12 +31,16 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testIgnore: /auth-fixture-smoke|slice-4\.4/,
+      // Unauthed surface tests only. Auth-gated specs (the fixture smoke
+      // + per-slice auth-gated suites) are routed to chromium-authed.
+      testIgnore: /auth-fixture-smoke|slice-4\.\d/,
       use: { browserName: "chromium" },
     },
     {
       name: "chromium-authed",
-      testMatch: /auth-fixture-smoke|slice-4\.4/,
+      // Auth-gated. Matches the fixture smoke + any `slice-4.N-*.spec.ts`
+      // pattern (slice 4.4 map, slice 4.5 constraints, future slices).
+      testMatch: /auth-fixture-smoke|slice-4\.\d/,
       use: {
         browserName: "chromium",
         // storageState is minted by web/scripts/mint-playwright-auth.ts.

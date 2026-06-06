@@ -46,7 +46,13 @@ AuthedUser = Annotated[User, Depends(require_mcp_token)]
 
 _ACTIVE_JOB_KEY_TTL_SECONDS = 900
 
-ConstraintKind = Literal["budget", "dietary", "mobility", "no_go", "walking_limit", "custom"]
+# When adding a kind here, also add a per-kind framing branch in
+# services/constraint_synthesizer.py:_framing_for_kind() — the
+# generic fall-through is acceptable but ships less-specific
+# semantic framing to the refine worker.
+ConstraintKind = Literal[
+    "budget", "dietary", "mobility", "no_go", "walking_limit", "accessibility", "custom"
+]
 
 
 class AddConstraintRequest(BaseModel):

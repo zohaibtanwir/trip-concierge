@@ -303,11 +303,32 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
   - `trip-concierge-w87`: TripMap editorial-shadow clipping concern (closed as superseded by Q22 resolution in commit 3 — TripMap now uses `border-outline-variant` only, matching right-rail consistency).
 - **Merge:** _<placeholder — post-merge footer convention>_
 
-### Slice 4.5: Constraint controls + pace slider
+### Slice 4.5: Constraint controls (4 of 8 §F4 kinds)
 
-- [ ] **Done when:** Bottom-sheet UI for setting constraints. Changes trigger plan regeneration via backend.
-- **Files to create:** `web/components/ConstraintSheet.tsx`, `web/components/PaceSlider.tsx`
-- **Tests:** interaction tests.
+- [x] **Done when:** Constraint editor renders on `/trips/[id]` right rail between TripMap and PlanHistoryPanel — third Phase 4 slice to ship a PRD-feature surface (§F2 in 4.3 → §F3 in 4.4 → §F4 in 4.5). Four kinds wired: dietary (multi-select chips), mobility (radio), accessibility (toggle), no-go (free-text list). Submit fires `POST /trips/{id}/constraints` via `addConstraintAction` Server Action — slice 3.4a endpoint auto-enqueues `refine_trip` on success. Read-only chip list (Material Symbols per kind) renders persisted `trip.constraints.rules[]` below the editor.
+
+- ⚠️ **PRD §F4 partial compliance.** Four of eight §F4 acceptance bullets ship in v1.0a: dietary tags, mobility, accessibility flag, no-go list. **Deferred to v1.0a-companion (`trip-concierge-cdr`):** total budget cap, per-day budget cap, max walking distance per day, pace slider. The deferral is wiring-shaped — the four shipped kinds reuse slice 3.4a's existing `POST /trips/{id}/constraints` endpoint (no new backend); the four deferred kinds need (a) backend support for caps + walking-limit + pace as enforced fields, and (b) Budget Auditor agent enforcement loop wiring (§F4 bullet 2: "validates the full itinerary against caps before output is finalized; if exceeded, plan is sent back for revision, max 2 retries"). Shipping chip controls without the enforcement loop would lie to the user. v1.0a release criteria include explicit §F4 review at Phase 5 closeout (joining §F2 from 4.3 + §F3 from 4.4).
+
+- **What this slice delivers:**
+  - **User-visible value (high):** the first interactive control surface on the trip detail page that produces a re-plan. Establishes the "Save and re-plan" → "Saving…" → restored plan pattern that slice 4.6 (edit/regenerate) will inherit.
+  - **Engineering value (modest):** `forceVariant` responsive-wrapper pattern proved out a second time (mirror of slice 4.3 BlockExpand); per-kind synthesizer discipline (`accessibility` framing branch) sets the pattern for the deferred caps. Spec §9.13 + §17.12.
+
+- **Tracked as:** `trip-concierge-z9o` (P1).
+- **Files created:**
+  - web: `components/constraint-form.tsx`, `components/constraint-panel.tsx`, `components/constraint-list.tsx`, `tests/constraint-form.test.tsx`, `tests/constraint-panel.test.tsx`, `tests/constraint-list.test.tsx`, `tests/e2e/slice-4.5-constraints.spec.ts`.
+- **Files modified:**
+  - backend: `app/routes/constraints.py` (`accessibility` added to `ConstraintKind` Literal + per-kind synthesizer discipline comment), `app/services/constraint_synthesizer.py` (`_framing_for_kind` accessibility branch), `tests/test_constraints_endpoint.py` (new test for accessibility kind).
+  - web: `lib/actions.ts` (`addConstraintAction` object-args Server Action + `AddConstraintResult` + `ConstraintKind` re-export + planAgainAction asymmetry note), `app/trips/[id]/page.tsx` (right-rail integration), `playwright.config.ts` (regex generalized to `/auth-fixture-smoke|slice-4\.\d/` — matches all Phase 4 specs without per-slice config changes).
+  - docs: `design-spec.md` (§9.13 + §17.12 + v1.0.2 changelog).
+- **Tests:** 23 net new (5 backend in commit 1 + 7 vitest unit in commit 2 + 2 Playwright e2e in commit 2 + 9 wrapper tests across 3 component test files). Cumulative: 469 (196 backend + 99 mcp_server + 45 agents + 111 web vitest + 7 chromium-authed e2e + 11 from prior).
+- **Followup tickets filed:**
+  - `trip-concierge-cdr` (P1): v1.0a-companion — pace slider + total/per-day budget caps + walking-distance slider + Budget Auditor enforcement loop wiring (§F4 bullets 2/3/4).
+  - `trip-concierge-hr2` (P3): DELETE `/trips/{id}/constraints/{rule_idx}` endpoint + ConstraintList chip removal UI.
+  - `trip-concierge-5gf` (P3): `useMediaQuery` runtime resolution for ConstraintPanel `forceVariant` (currently inline-only on page).
+  - `trip-concierge-wce` (P2): Web trip creation positioning decision — v1.0a deliberately defers web-side trip creation in favor of MCP-first narrative (Claude Desktop creates, PWA manages). Tracked for v1.0b reconsideration.
+- **Tickets closed in this slice:**
+  - `trip-concierge-z9o`: Constraint controls (closed at merge).
+- **Merge:** _<placeholder — post-merge footer convention>_
 
 ### Slice 4.6: Edit and regenerate (block-level + day-level)
 

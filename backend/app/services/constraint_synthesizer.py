@@ -40,6 +40,8 @@ def _framing_for_kind(kind: str, value: Any) -> str:
         return f"Exclude this from the trip: {value}."
     if kind == "walking_limit":
         return f"Apply a daily walking limit of {value} km."
+    if kind == "accessibility":
+        return f"Apply this accessibility requirement across the trip: {value}."
     # custom or unrecognized — fall through to generic framing.
     return f"Apply this user-stated constraint: {value}."
 
