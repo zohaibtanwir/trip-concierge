@@ -102,3 +102,60 @@ export async function addConstraintAction({
   }
   return (await response.json()) as AddConstraintResult;
 }
+
+/**
+ * updateTripSettingsAction — invoked by <PlanControlsPanel /> on the
+ * trip detail page (slice 4.5b). Consumes the new slice-4.5b PATCH
+ * /trips/{id} route which updates the Trip.pace + Trip.budget_total
+ * columns AND auto-enqueues a refine job to incorporate the new
+ * settings.
+ *
+ * Settings-vs-rules distinction: pace and budget_total are *column
+ * writes* (settings overwrite — last value wins). The companion
+ * addConstraintAction above handles *rule appends* (constraints
+ * accumulate). Two object-args Server Actions, two backend paths
+ * (PATCH vs POST), aligned at every layer.
+ *
+ * Omit-undefined serialization: only fields the user explicitly
+ * changed appear in the PATCH body. The backend's at-least-one-of
+ * validator would 422 an empty body; the UI prevents that round-trip
+ * by no-op'ing submit when nothing changed.
+ */
+export type TripPace = "packed" | "balanced" | "lazy";
+
+export interface UpdateTripSettingsResult {
+  job_id: string;
+  status_url: string;
+}
+
+export async function updateTripSettingsAction({
+  tripId,
+  userId,
+  pace,
+  budgetTotal,
+}: {
+  tripId: string;
+  userId: string;
+  pace?: TripPace;
+  budgetTotal?: number;
+}): Promise<UpdateTripSettingsResult> {
+  const { mcp_token } = await mintMcpToken({ userId });
+  const body: Record<string, unknown> = {};
+  if (pace !== undefined) body.pace = pace;
+  if (budgetTotal !== undefined) body.budget_total = budgetTotal;
+  const response = await fetch(`${env.BACKEND_URL}/trips/${tripId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "x-tc-token": mcp_token,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new BackendError(
+      response.status,
+      `updateTripSettingsAction HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  return (await response.json()) as UpdateTripSettingsResult;
+}

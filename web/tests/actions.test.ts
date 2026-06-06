@@ -131,3 +131,82 @@ describe("addConstraintAction", () => {
     ).rejects.toThrow(/403/);
   });
 });
+
+describe("updateTripSettingsAction", () => {
+  it("mints token + PATCHes /trips/{id} with pace + budget_total body, returns parsed response", async () => {
+    // Slice 4.5b commit 2 — settings-shaped column writes via the new
+    // PATCH /trips/{id} route landed in commit 1. Object-args pattern
+    // (matches addConstraintAction). Wire shape: PATCH with JSON body
+    // {pace?, budget_total?}, response shape {job_id, status_url}.
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({ mcp_token: "jwt-settings", expires_at: "2026-09-03T00:00:00Z" }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({
+        job_id: "patch-refine-xyz",
+        status_url: "/trips/trip-1/plan/status",
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { updateTripSettingsAction } = await import("@/lib/actions");
+    const result = await updateTripSettingsAction({
+      tripId: "trip-1",
+      userId: "user-abc",
+      pace: "packed",
+      budgetTotal: 50000,
+    });
+
+    expect(result.job_id).toBe("patch-refine-xyz");
+    expect(result.status_url).toBe("/trips/trip-1/plan/status");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [patchUrl, patchInit] = fetchMock.mock.calls[1];
+    expect(patchUrl).toBe("http://test-backend/trips/trip-1");
+    expect(patchInit?.method).toBe("PATCH");
+    expect((patchInit?.headers as Record<string, string>)["x-tc-token"]).toBe("jwt-settings");
+    expect(JSON.parse(patchInit?.body as string)).toEqual({
+      pace: "packed",
+      budget_total: 50000,
+    });
+  });
+
+  it("omits undefined fields from PATCH body — pace-only call sends only pace", async () => {
+    // The backend's at-least-one-of validator accepts {pace} alone OR
+    // {budget_total} alone. The client must serialize ONLY the provided
+    // fields — undefined values should not appear as keys with null.
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ job_id: "j", status_url: "/x" }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { updateTripSettingsAction } = await import("@/lib/actions");
+    await updateTripSettingsAction({
+      tripId: "trip-1",
+      userId: "user-abc",
+      pace: "lazy",
+    });
+
+    const [, patchInit] = fetchMock.mock.calls[1];
+    const body = JSON.parse(patchInit?.body as string);
+    expect(body).toEqual({ pace: "lazy" });
+    expect(body).not.toHaveProperty("budget_total");
+  });
+
+  it("throws BackendError on 403 (ownership mismatch propagates from backend)", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(new Response("forbidden", { status: 403 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { updateTripSettingsAction } = await import("@/lib/actions");
+    await expect(
+      updateTripSettingsAction({
+        tripId: "other-user-trip",
+        userId: "user-abc",
+        pace: "packed",
+      }),
+    ).rejects.toThrow(/403/);
+  });
+});
