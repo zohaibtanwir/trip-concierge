@@ -307,7 +307,7 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
 
 - [x] **Done when:** Constraint editor renders on `/trips/[id]` right rail between TripMap and PlanHistoryPanel — third Phase 4 slice to ship a PRD-feature surface (§F2 in 4.3 → §F3 in 4.4 → §F4 in 4.5). Four kinds wired: dietary (multi-select chips), mobility (radio), accessibility (toggle), no-go (free-text list). Submit fires `POST /trips/{id}/constraints` via `addConstraintAction` Server Action — slice 3.4a endpoint auto-enqueues `refine_trip` on success. Read-only chip list (Material Symbols per kind) renders persisted `trip.constraints.rules[]` below the editor.
 
-- ⚠️ **PRD §F4 partial compliance.** Four of eight §F4 acceptance bullets ship in v1.0a: dietary tags, mobility, accessibility flag, no-go list. **Deferred to v1.0a-companion (`trip-concierge-cdr`):** total budget cap, per-day budget cap, max walking distance per day, pace slider. The deferral is wiring-shaped — the four shipped kinds reuse slice 3.4a's existing `POST /trips/{id}/constraints` endpoint (no new backend); the four deferred kinds need (a) backend support for caps + walking-limit + pace as enforced fields, and (b) Budget Auditor agent enforcement loop wiring (§F4 bullet 2: "validates the full itinerary against caps before output is finalized; if exceeded, plan is sent back for revision, max 2 retries"). Shipping chip controls without the enforcement loop would lie to the user. v1.0a release criteria include explicit §F4 review at Phase 5 closeout (joining §F2 from 4.3 + §F3 from 4.4).
+- ✅ **PRD §F4 partial compliance — discharged in slice 4.5b (`trip-concierge-cdr`).** Slice 4.5 shipped the rules-shaped 4 (dietary, mobility, accessibility, no-go). Slice 4.5b shipped the settings-shaped 2 (pace, total budget via new `PATCH /trips/{id}` route) + the remaining rules-shaped 2 (walking_limit, per-day budget as new ConstraintForm sections) + Budget Auditor enforcement loop wiring in `refine_trip`. §F4 is fully discharged in v1.0a — no Phase 5 review gate remaining on this PRD section. The historical "partial → discharged" timeline is preserved in spec §17.12 for the architectural-foresight narrative.
 
 - **What this slice delivers:**
   - **User-visible value (high):** the first interactive control surface on the trip detail page that produces a re-plan. Establishes the "Save and re-plan" → "Saving…" → restored plan pattern that slice 4.6 (edit/regenerate) will inherit.
@@ -328,6 +328,38 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
   - `trip-concierge-xcs` (P2, pre-existing): Web trip creation positioning decision — v1.0a deliberately defers web-side trip creation in favor of MCP-first narrative (Claude Desktop creates, PWA manages). Tracked for v1.0b reconsideration.
 - **Tickets closed in this slice:**
   - `trip-concierge-z9o`: Constraint controls (closed at merge).
+- **Merge:** _<placeholder — post-merge footer convention>_
+
+### Slice 4.5b: PRD §F4 discharge — pace + budgets + walking-limit + auditor enforcement loop
+
+- [x] **Done when:** All 8 PRD §F4 controls ship in v1.0a. Pace + total budget land as column writes via new `PATCH /trips/{id}` route (+ refine enqueue); per-day budget + walking-limit land as new sections in ConstraintForm using the existing slice-3.4a endpoint. Budget Auditor enforcement loop wired into `refine_trip` via `MAX_REFINE_AUDIT_PASSES = 2` Python orchestration (mirror of plan_trip's `MAX_AUDIT_PASSES` — PRD §F4 bullet 2 "max 2 retries" now holds for refine the same way it holds for initial plan).
+
+- ✅ **§F4 fully discharged.** No Phase 5 review gate remaining on this PRD section.
+
+- **What this slice delivers:**
+  - **User-visible value (high):** the demo's load-bearing surface — Marsh narrative now reads "I changed pace from balanced to packed and the trip regenerated with more blocks per day," not "we're partially compliant with §F4." Settings-vs-rules ontology surfaced at three layers (data column vs JSONB array → API PATCH vs POST → UI "Update" vs "Save" verb) and codified in spec §9.14.
+  - **Engineering value (substantial):** trip-lock helpers extracted to `services/trip_lock.py` (5 sibling-route importers swept + 3 duplicate `_ACTIVE_JOB_KEY_TTL_SECONDS = 900` constants removed); `_serialize_trip_for_crew` now flattens `per_day_budget` + `max_walking_km` from `constraints.rules[]` so the auditor sees real values instead of "unspecified"; `crew.refine()` now honors `MAX_REFINE_AUDIT_PASSES = 2` in code; prompts.md §3.5 corrective edit breaks the implicit "keep going until approved" signal that hierarchical refine could have spun on.
+
+- **Tracked as:** `trip-concierge-cdr` (P1).
+- **4-commit decomposition:**
+  1. `4c7eb9b` — backend refactor + PATCH route + audit loop (22 tests). Extract `trip_lock`; new `routes/trip_settings.py`; serializer extraction; `MAX_REFINE_AUDIT_PASSES` + `_run_refine_audit_pass`; prompts.md §3.5 edit.
+  2. `0a4fb73` — web PlanControlsPanel + `updateTripSettingsAction` (9 vitest + 3 e2e). Three-layer verb-as-disclosure ("Update settings and re-plan").
+  3. `6648af2` — walking_limit + per-day budget sections in ConstraintForm (3 tests). Rules-shaped companions to commit 2's settings-shaped surface.
+  4. `<commit-4-sha>` — docs (spec §9.13 + §9.14 + §17.12 + BUILD_PLAN + v1.0.2 → v1.0.3 bump).
+- **Files created:**
+  - backend: `app/services/trip_lock.py`, `app/routes/trip_settings.py`, `tests/test_trip_lock.py`, `tests/test_patch_trip_route.py`, `tests/test_refine_audit_constraints.py`.
+  - agents: `tests/test_refine_audit_loop.py`.
+  - web: `components/plan-controls-form.tsx`, `components/plan-controls-panel.tsx`, `tests/plan-controls-form.test.tsx`, `tests/plan-controls-panel.test.tsx`, `tests/e2e/slice-4.5b-plan-controls.spec.ts`.
+- **Files modified:**
+  - backend: `app/routes/plan.py`, `app/routes/alternative.py`, `app/routes/constraints.py`, `app/routes/refine.py`, `app/routes/regenerate.py`, `app/routes/sources.py` (all swept to import from `trip_lock`), `app/main.py` (`trip_settings` router), `app/worker.py` (`_extract_settings_from_rules` + serializer wiring).
+  - agents: `src/trip_agents/crew.py` (`MAX_REFINE_AUDIT_PASSES`, `_run_refine_audit_pass`, refine audit loop), `src/trip_agents/tasks.py` (refine_task corrective edit), `prompts.md` §3.5.
+  - web: `lib/actions.ts` (`updateTripSettingsAction` + `TripPace`), `components/constraint-form.tsx` (walking_limit + per-day budget sections), `app/trips/[id]/page.tsx` (PlanControlsPanel insertion), `tests/actions.test.ts` (3 new), `tests/constraint-form.test.tsx` (3 new).
+  - docs: `design-spec.md` (§9.13 extended 4→6 sections, §9.14 NEW PlanControlsPanel, §17.12 rewritten as discharged historical note, v1.0.3 changelog).
+- **Tests:** 37 net new (22 backend/agents + 9 web + 3 e2e queued + 3 web). Cumulative: **506** = 213 backend + 99 mcp_server + 52 agents (+1 skipped) + 123 web vitest + 7 chromium-authed e2e + 12 from prior (slice 4.5's 11 + slice 4.5b's 1 not-yet-merged e2e budget).
+- **Followup tickets filed:**
+  - `trip-concierge-6e2` (P3): Audit form-section visual redundancy — sr-only vs visible legends across ConstraintForm + PlanControlsForm + future settings forms. Surfaced when commit 2's vitest selector required disambiguation on the inline panel's "Pace" string.
+- **Tickets closed in this slice:**
+  - `trip-concierge-cdr`: Slice 4.5b (closed at merge).
 - **Merge:** _<placeholder — post-merge footer convention>_
 
 ### Slice 4.6: Edit and regenerate (block-level + day-level)
