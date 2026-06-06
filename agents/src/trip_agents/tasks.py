@@ -133,7 +133,11 @@ def make_refine_task() -> Task:
             "Decide which agents to route this through, apply the modification, "
             "and produce an updated full itinerary. Preserve any blocks marked "
             "locked=true. Validate the result against the trip's stated budget "
-            "and constraints — Budget Auditor must approve before returning."
+            "and constraints — invoke Budget Auditor as the final step and "
+            "return whatever it produces (approved or not). The orchestrator "
+            "(crew.py) runs Budget Auditor again up to MAX_REFINE_AUDIT_PASSES "
+            "times if approved=false — do not loop internally trying to satisfy "
+            "it. Focus on one good refine pass."
         ),
         expected_output=(
             "JSON matching the AuditedPlan schema: approved (bool), days (array), "

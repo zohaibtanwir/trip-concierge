@@ -20,7 +20,7 @@ Gate ordering (top to bottom, fail-fast):
 1. Auth — Depends(require_mcp_token); 401 if missing/bad.
 2. Trip exists — 404 if Trip.id not found.
 3. Active job in flight — 409 + kind="active_job" + job_id + kind label.
-   Reuses slice-3.3 decode_active_value + KIND_LABELS from app.routes.plan.
+   Reuses slice-3.3 decode_active_value + KIND_LABELS from app.services.trip_lock.
 4. Trip in succeeded state — checks latest JobRun.status; 409 +
    kind="not_ready" + state if never planned, failed, or cancelled.
 5. block_id exists on this trip — 404 if not. Backend layer of the
@@ -57,8 +57,8 @@ from app.models.block import Block
 from app.models.day import Day
 from app.models.job_run import JobRun
 from app.models.user import User
-from app.routes.plan import KIND_LABELS, decode_active_value
 from app.services import trip_service
+from app.services.trip_lock import KIND_LABELS, decode_active_value
 
 router = APIRouter(prefix="/trips", tags=["alternative"])
 

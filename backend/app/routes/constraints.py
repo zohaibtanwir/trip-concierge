@@ -4,9 +4,9 @@ Slice 3.4a commit 2. The route:
 1. Validates input (Pydantic forbids unknown kinds + requires text).
 2. Loads the Trip — 404 if missing.
 3. Checks the slice-3.3 active_job key — 409 if any job is in flight.
-   Reuses decode_active_value + KIND_LABELS from app.routes.plan exactly;
-   no helper duplication. (Phase 5 organizational note: when these helpers
-   get used in more places, consider moving to a shared service module.)
+   Reuses decode_active_value + KIND_LABELS from app.services.trip_lock
+   (extracted in slice 4.5b for ownership clarity — see that module's
+   docstring for the rationale).
 4. Appends the constraint to Trip.constraints["rules"] via the commit-1
    storage helper. The append happens BEFORE the enqueue — if enqueue
    fails, the constraint is still persisted and the user can retry.
@@ -31,20 +31,19 @@ from app.auth.dependencies import require_mcp_token
 from app.config import settings
 from app.db.session import get_session
 from app.models.user import User
-from app.routes.plan import (
+from app.services import trip_service
+from app.services.constraint_synthesizer import synthesize_constraint_refinement
+from app.services.trip_lock import (
+    ACTIVE_JOB_KEY_TTL_SECONDS,
     KIND_LABELS,
     decode_active_value,
     encode_active_value,
 )
-from app.services import trip_service
-from app.services.constraint_synthesizer import synthesize_constraint_refinement
 
 router = APIRouter(prefix="/trips", tags=["constraints"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 AuthedUser = Annotated[User, Depends(require_mcp_token)]
-
-_ACTIVE_JOB_KEY_TTL_SECONDS = 900
 
 # When adding a kind here, also add a per-kind framing branch in
 # services/constraint_synthesizer.py:_framing_for_kind() — the
@@ -133,7 +132,7 @@ async def add_constraint(
 
     await redis.setex(
         active_key,
-        _ACTIVE_JOB_KEY_TTL_SECONDS,
+        ACTIVE_JOB_KEY_TTL_SECONDS,
         encode_active_value(job_id=job.job_id, kind="refine"),
     )
 

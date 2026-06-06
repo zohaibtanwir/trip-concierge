@@ -24,19 +24,18 @@ from app.auth.dependencies import require_mcp_token
 from app.config import settings
 from app.db.session import get_session
 from app.models.user import User
-from app.routes.plan import (
+from app.services import trip_service
+from app.services.trip_lock import (
+    ACTIVE_JOB_KEY_TTL_SECONDS,
     KIND_LABELS,
     decode_active_value,
     encode_active_value,
 )
-from app.services import trip_service
 
 router = APIRouter(prefix="/trips", tags=["regenerate"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 AuthedUser = Annotated[User, Depends(require_mcp_token)]
-
-_ACTIVE_JOB_KEY_TTL_SECONDS = 900
 
 
 class RegenerateRequest(BaseModel):
@@ -97,7 +96,7 @@ async def enqueue_regenerate(
 
     await redis.setex(
         active_key,
-        _ACTIVE_JOB_KEY_TTL_SECONDS,
+        ACTIVE_JOB_KEY_TTL_SECONDS,
         encode_active_value(job_id=job.job_id, kind="regen"),
     )
 

@@ -64,6 +64,13 @@ _CREW_FAILURE_DUMP_DIR = Path("/tmp")
 
 MAX_AUDIT_PASSES = 2
 
+# Slice 4.5b commit 1: refine's audit loop cap. Symmetric with
+# MAX_AUDIT_PASSES (plan_trip's cap) — PRD §F4 bullet 2 "max 2 retries"
+# applies to BOTH plan_trip and refine_trip. crew.refine() runs the
+# hierarchical refine once, then up to MAX_REFINE_AUDIT_PASSES
+# Python-orchestrated audit passes if approved=False.
+MAX_REFINE_AUDIT_PASSES = 2
+
 DEFAULT_INPUTS = {
     "start_date": "TBD",
     "end_date": "TBD",
@@ -369,8 +376,27 @@ def refine(
     refinement_description: str,
     step_callback: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
-    """Hierarchical refine. Returns AuditedPlan.model_dump() — same shape as
-    plan_trip's output so the worker calls persist_audited_plan unchanged.
+    """Hierarchical refine + Python audit loop. Returns AuditedPlan.model_dump()
+    — same shape as plan_trip's output so the worker calls
+    persist_audited_plan unchanged.
+
+    Pipeline (slice 4.5b commit 1):
+
+        refine(trip_state, refinement_description) :=
+            AuditedPlan_initial = hierarchical_refine(...)
+            if approved=True: return AuditedPlan_initial
+            else: run _run_refine_audit_pass up to MAX_REFINE_AUDIT_PASSES
+                  times, returning the last pass's result whatever it is
+
+    The hierarchical refine produces a candidate plan via Researcher →
+    Local Expert → Logistics → Budget Auditor routing (manager_llm
+    decides). If the Auditor rejects, we Python-orchestrate additional
+    Auditor-only passes — same pattern as plan_trip's run_audit, so
+    PRD §F4 bullet 2 (max 2 retries) holds for refine the same way it
+    holds for plan_trip.
+
+    The MAX_REFINE_AUDIT_PASSES cap is enforced in Python so the model
+    can't violate it (same principle as plan_trip's MAX_AUDIT_PASSES).
     """
     inputs: dict[str, Any] = {
         "trip_state_json": json.dumps(trip_state),
@@ -382,12 +408,101 @@ def refine(
         inputs,
     )
     audited = _extract_audited_plan(crew_result)
+
+    # Audit loop: only fires when hierarchical refine returns
+    # approved=False. Symmetric with plan_trip's run_audit pattern.
+    if not audited.approved:
+        constraints = {
+            "budget_total": trip_state.get("budget_total"),
+            "per_day_budget": trip_state.get("per_day_budget"),
+            "dietary": trip_state.get("dietary") or "none",
+            "mobility": trip_state.get("mobility") or "none",
+            "no_go_list": trip_state.get("no_go_list") or "none",
+            "max_walking_km": trip_state.get("max_walking_km"),
+        }
+        currency = str(trip_state.get("currency", "USD"))
+        cumulative_log: list[str] = list(audited.revision_log)
+        current_plan = TripPlan(days=audited.days)
+        last_audit: AuditedPlan = audited
+        for pass_num in range(1, MAX_REFINE_AUDIT_PASSES + 1):
+            last_audit = _run_refine_audit_pass(
+                current_plan,
+                constraints,
+                currency,
+                pass_num,
+                step_callback=step_callback,
+            )
+            cumulative_log.extend(f"Pass {pass_num}: {entry}" for entry in last_audit.revision_log)
+            if last_audit.approved:
+                break
+            current_plan = TripPlan(days=last_audit.days)
+        audited = AuditedPlan(
+            approved=last_audit.approved,
+            days=last_audit.days,
+            per_day_costs=last_audit.per_day_costs,
+            total_cost=last_audit.total_cost,
+            currency=last_audit.currency or currency,
+            constraints_violated=last_audit.constraints_violated,
+            explanation=last_audit.explanation,
+            revision_log=cumulative_log,
+        )
+
     output: dict[str, Any] = audited.model_dump()
     logger.info(
         "crew.refine.success",
         extra={"approved": output.get("approved"), "days": len(output.get("days") or [])},
     )
     return output
+
+
+@observe(name="refine.audit.pass")
+def _run_refine_audit_pass(
+    plan: TripPlan,
+    constraints: dict[str, Any],
+    currency: str,
+    pass_num: int,
+    step_callback: Callable[[Any], None] | None = None,
+) -> AuditedPlan:
+    """Single Auditor LLM call for refine's audit loop.
+
+    Mirror of _run_audit_pass (plan_trip's audit pass) — same shape
+    so future readers see the symmetric pattern. Single-agent
+    (budget_auditor) sequential crew; the audit task template
+    variables resolve to the trip's structured constraint values.
+    """
+    from trip_agents.budget_auditor import budget_auditor  # noqa: PLC0415
+
+    task = make_audit_task()
+    crew_kwargs: dict[str, Any] = {
+        "agents": [budget_auditor],
+        "tasks": [task],
+        "process": Process.sequential,
+        "verbose": False,
+    }
+    if step_callback is not None:
+        crew_kwargs["step_callback"] = step_callback
+    crew = Crew(**crew_kwargs)
+    pass_inputs: dict[str, Any] = {
+        "current_plan_json": plan.model_dump_json(),
+        "currency": currency,
+        "budget_total": constraints.get("budget_total") or "unspecified",
+        "per_day_budget": constraints.get("per_day_budget") or "unspecified",
+        "dietary": constraints.get("dietary") or "none",
+        "mobility": constraints.get("mobility") or "none",
+        "no_go_list": constraints.get("no_go_list") or "none",
+        "max_walking_km": constraints.get("max_walking_km") or "unspecified",
+        "pass_num": pass_num,
+    }
+    logger.info("refine.audit.pass.start", extra={"pass_num": pass_num})
+    result = _kickoff_with_loop(crew, pass_inputs)
+    if hasattr(result, "pydantic") and isinstance(result.pydantic, AuditedPlan):
+        return result.pydantic
+    parsed = _parse_json(str(result))
+    if isinstance(parsed, dict):
+        return AuditedPlan.model_validate(parsed)
+    raise ValueError(
+        f"refine audit pass {pass_num}: could not extract AuditedPlan from {str(result)[:200]!r}"
+    )
 
 
 def _build_regenerate_day_crew(
