@@ -38,14 +38,23 @@ export interface ConstraintSubmission {
 
 interface ConstraintFormProps {
   onSubmit: (entries: ConstraintSubmission[]) => Promise<void> | void;
+  // Slice 4.5b commit 3: per-day budget rendered with currency label.
+  // Optional with USD default so existing callers (slice 4.5) don't
+  // need to thread the prop. The trip's currency lives on Trip.currency
+  // and is already in TripFull — caller passes it through ConstraintPanel.
+  currency?: string;
 }
 
-export function ConstraintForm({ onSubmit }: ConstraintFormProps) {
+export function ConstraintForm({ onSubmit, currency = "USD" }: ConstraintFormProps) {
   const [dietary, setDietary] = useState<string[]>([]);
   const [mobility, setMobility] = useState<string>("");
   const [accessibility, setAccessibility] = useState(false);
   const [noGoList, setNoGoList] = useState<string[]>([]);
   const [noGoInput, setNoGoInput] = useState("");
+  // Slice 4.5b commit 3: walking_limit + per-day budget — rules-shaped
+  // companions to slice 4.5b PlanControlsPanel's settings-shaped surface.
+  const [walkingLimit, setWalkingLimit] = useState<string>("");
+  const [perDayBudget, setPerDayBudget] = useState<string>("");
   const [pending, setPending] = useState(false);
 
   function _toggleDietary(option: string) {
@@ -82,6 +91,18 @@ export function ConstraintForm({ onSubmit }: ConstraintFormProps) {
     }
     for (const entry of noGoList) {
       entries.push({ kind: "no_go", text: entry });
+    }
+    // Slice 4.5b commit 3: walking_limit + per-day budget — non-empty
+    // numeric input string becomes the entry text. The backend
+    // synthesizer (services/constraint_synthesizer.py) wraps these as
+    // "Apply a daily walking limit of {value} km." and "Apply a new
+    // per-day budget cap of {value} (trip currency)." — the form
+    // supplies only the value, not the framing.
+    if (walkingLimit.trim() !== "") {
+      entries.push({ kind: "walking_limit", text: walkingLimit.trim() });
+    }
+    if (perDayBudget.trim() !== "") {
+      entries.push({ kind: "budget", text: perDayBudget.trim() });
     }
     if (entries.length === 0) return;
 
@@ -196,6 +217,44 @@ export function ConstraintForm({ onSubmit }: ConstraintFormProps) {
             ))}
           </ul>
         )}
+      </fieldset>
+
+      {/* Walking limit — numeric input with km label */}
+      <fieldset>
+        <legend className="text-label-md text-on-surface mb-2">Walking limit</legend>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            id="walking-limit-input"
+            aria-label="Walking limit"
+            min={0}
+            step="any"
+            value={walkingLimit}
+            onChange={(e) => setWalkingLimit(e.target.value)}
+            placeholder="e.g., 5"
+            className="flex-1 px-3 py-1.5 rounded border border-outline-variant bg-surface-container-lowest text-body-md focus-visible:ring-2 focus-visible:ring-primary"
+          />
+          <span className="text-label-sm text-on-surface-variant uppercase">km / day</span>
+        </div>
+      </fieldset>
+
+      {/* Per-day budget — numeric input with currency label */}
+      <fieldset>
+        <legend className="text-label-md text-on-surface mb-2">Per-day budget</legend>
+        <div className="flex items-center gap-2">
+          <span className="text-label-sm text-on-surface-variant uppercase">{currency}</span>
+          <input
+            type="number"
+            id="per-day-budget-input"
+            aria-label="Per-day budget"
+            min={0}
+            step="any"
+            value={perDayBudget}
+            onChange={(e) => setPerDayBudget(e.target.value)}
+            placeholder="e.g., 3000"
+            className="flex-1 px-3 py-1.5 rounded border border-outline-variant bg-surface-container-lowest text-body-md focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </div>
       </fieldset>
 
       <div>

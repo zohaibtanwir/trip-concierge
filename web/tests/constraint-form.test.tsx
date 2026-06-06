@@ -88,4 +88,57 @@ describe("<ConstraintForm />", () => {
     expect(screen.queryByText(/loud bars/i)).toBeNull();
     expect(screen.getByText(/crowded markets/i)).toBeDefined();
   });
+
+  // ── Slice 4.5b commit 3: walking_limit + per-day budget sections ────
+  // These two kinds are *rules-shaped* (append to constraints.rules[]),
+  // not settings-shaped (Trip column writes). They ship in
+  // ConstraintPanel alongside dietary/mobility/accessibility/no-go,
+  // using the EXISTING POST /trips/{id}/constraints endpoint with
+  // kind="walking_limit" and kind="budget". The settings counterparts
+  // (pace + total budget) live in PlanControlsPanel.
+
+  it("walking-limit numeric input accepts km value", async () => {
+    const onSubmit = vi.fn();
+    const { ConstraintForm } = await import("@/components/constraint-form");
+    render(<ConstraintForm onSubmit={onSubmit} />);
+
+    const input = screen.getByLabelText(/walking limit/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "5" } });
+    expect(input.value).toBe("5");
+  });
+
+  it("per-day budget numeric input accepts currency-shaped value", async () => {
+    const onSubmit = vi.fn();
+    const { ConstraintForm } = await import("@/components/constraint-form");
+    render(<ConstraintForm onSubmit={onSubmit} />);
+
+    const input = screen.getByLabelText(/per.?day budget/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "3000" } });
+    expect(input.value).toBe("3000");
+  });
+
+  it("multi-section submit emits dietary + walking_limit + budget entries together", async () => {
+    // Verifies the existing multi-section submit pattern still works
+    // after the two new sections land. Three non-empty sections →
+    // three ConstraintSubmission entries with the right kinds.
+    const onSubmit = vi.fn();
+    const { ConstraintForm } = await import("@/components/constraint-form");
+    render(<ConstraintForm onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /vegetarian/i }));
+    fireEvent.change(screen.getByLabelText(/walking limit/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/per.?day budget/i), { target: { value: "3000" } });
+
+    const submitBtn = screen.getByRole("button", { name: /save and re-?plan/i });
+    fireEvent.click(submitBtn);
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const entries = onSubmit.mock.calls[0][0] as Array<{ kind: string; text: string }>;
+    const kinds = entries.map((e) => e.kind);
+    expect(kinds).toContain("dietary");
+    expect(kinds).toContain("walking_limit");
+    expect(kinds).toContain("budget");
+    expect(entries.find((e) => e.kind === "walking_limit")?.text).toBe("5");
+    expect(entries.find((e) => e.kind === "budget")?.text).toBe("3000");
+  });
 });
