@@ -276,9 +276,32 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
 
 ### Slice 4.4: Map view with MapLibre
 
-- [ ] **Done when:** Map renders, pins show, tap-to-scroll-itinerary works. Two-column layout above 768px, hidden behind a toggle on mobile.
-- **Files to create:** `web/components/MapView.tsx`
-- **Tests:** screenshot test at mobile + desktop viewports.
+- [x] **Done when:** MapLibre map panel renders on `/trips/[id]` succeeded + failed states (stacks between DayChipTimeline and PlanHistoryPanel in the sticky right rail). Destination-centered view with single pin + always-open Popup labeled `{N} day(s) in {City}`. OpenFreeMap demo tiles via env-overridable `MAPLIBRE_TILE_URL`. Auth-gated Playwright fixture (`p8l`) landed as commit 1 — consumed by slice 4.4's map smoke + all future visual-heavy slices.
+
+- ⚠️ **PRD §F3 architectural foundation only.** The map surface exists for v1.0b pins to land into; user-visible §F3 acceptance criteria are NOT yet met. Specifically NOT shipped: per-block pins (deferred to backend lat/lng work — `trip-concierge-423`), route lines between blocks (deferred to Directions API slice — `trip-concierge-kue`), day color-coding, "Today" mode, tap-pin-to-scroll. What ships: destination-centered map panel with pin + label, attribution, sticky placement, mobile collapse. v1.0a release criteria include explicit §F3 review at Phase 5 closeout (joining §F2 review from slice 4.3).
+
+- **What this slice delivers:**
+  - **Engineering value (high):** auth-gated Playwright fixture (JWE storageState — consumed by all future visual slices), deterministic e2e test seed (canonical visual fixture for slice 4.4+), MapLibre architectural foundation, spec §9.12 + §17.11.
+  - **User-visible value (modest):** map shows destination context only; per-block pins land when v1.0b backend lat/lng work completes (`trip-concierge-423`).
+
+- **Tracked as:** `trip-concierge-o9r` (P1, blocks 4.5/4.6 once map progresses).
+- **Files created:**
+  - web: `lib/destination-coords.ts`, `components/trip-map.tsx`, `scripts/mint-playwright-auth.ts`, `scripts/seed-e2e-trip.ts`, `tests/lib-destination-coords.test.ts`, `tests/trip-map.test.tsx`, `tests/e2e/auth-fixture-smoke.spec.ts`, `tests/e2e/slice-4.4-map.spec.ts`.
+- **Files modified:**
+  - docs: `design-spec.md` (§9.12 + §17.11 + v1.0.1 changelog).
+  - web: `app/trips/[id]/page.tsx` (TripMap integration), `lib/env.ts` (`MAPLIBRE_TILE_URL`), `package.json` (exact-pinned `maplibre-gl`, `react-map-gl`, `@panva/hkdf`, `jose`, `tsx`), `pnpm-workspace.yaml` (esbuild build-script block), `playwright.config.ts` (chromium-authed project), `.gitignore` (playwright-auth.json).
+  - CI: `.github/workflows/ci.yml` — added 5 env vars (NEXTAUTH_SECRET, NEXTAUTH_URL, TC_MCP_TOKEN_SECRET, INTERNAL_AUTH_SECRET, BACKEND_URL) as foundation for future auth-gated Playwright CI orchestration. Foundation only; CI workflow steps to consume them tracked as `trip-concierge-0y8`.
+- **Tests:** 14 net new (2 backend in commit 1 fixture smoke + 7 vitest unit in commit 2 + 5 Playwright e2e in commit 2). Cumulative: 446 (195 backend + 99 mcp_server + 45 agents + 102 web vitest + 5 e2e new + commit 1's 2 + existing 4 from slice 4.3).
+- **Followup tickets filed:**
+  - `trip-concierge-423` (P2): Backend lat/lng population for v1.0b per-block pins (crew prompts + geocoding).
+  - `trip-concierge-dj0` (P3): Production MapLibre tile source decision (Stadia / MapTiler / self-host).
+  - `trip-concierge-kue` (P3): PRD §F3 v1.0b — route lines + day color-coding + tap-pin-to-scroll + "Today" mode + Directions API.
+  - `trip-concierge-0y8` (P2): CI orchestration for auth-gated Playwright tests (consumes the env vars commit 1 added; wires the workflow steps).
+  - `trip-concierge-auu` (P3, updated): bundles spec v1.1 prep notes from this slice (§17.11 transitions for pin-less → pinned migration).
+- **Tickets closed in this slice:**
+  - `trip-concierge-p8l`: Auth-gated Playwright fixture (closed at commit 1).
+  - `trip-concierge-w87`: TripMap editorial-shadow clipping concern (closed as superseded by Q22 resolution in commit 3 — TripMap now uses `border-outline-variant` only, matching right-rail consistency).
+- **Merge:** _<placeholder — post-merge footer convention>_
 
 ### Slice 4.5: Constraint controls + pace slider
 

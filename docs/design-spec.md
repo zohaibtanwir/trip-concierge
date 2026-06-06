@@ -1,6 +1,6 @@
 # Trip Concierge — Design Spec
 
-**Version:** 1.0
+**Version:** 1.0.1
 **Status:** Active — authoritative source for visual language across web surfaces.
 **Last updated:** 2026-06-05
 **Maintainer:** See git blame for current owners.
@@ -479,6 +479,64 @@ Active item: filled icon, `bg-primary-container`, `text-on-primary-container`, `
 
 Dashed border (not solid) distinguishes empty state from content card.
 
+### 9.12 Map panel (right rail)
+
+Added in v1.0.1 (slice 4.4). Used on trip detail pages
+(`/trips/[id]`). Stacks in the sticky right aside between the day-chip
+timeline (§9.4) and the "How this plan was made" panel.
+
+**Placement:** Right column, between DayChipTimeline (above) and
+PlanHistoryPanel (below). Visible on succeeded + failed trip states
+only — planning state shows the in-progress section in the left
+column with no right-rail map.
+
+**Dimensions:** `h-[300px]` on mobile, `md:h-[400px]` on desktop. Full
+width within the right aside; rounded-xl per §6 + 1px border-outline-
+variant for visual separation.
+
+**No shadow on the panel itself.** TripMap uses `border-outline-
+variant` for visual separation, matching the other right-rail
+components (DayChipTimeline, PlanHistoryPanel). The right-rail as a
+whole is the sticky panel; individual components within it don't
+carry independent shadow elevation. This is a deliberate spec choice
+per §7 — shadows are reserved for sticky surfaces, not for visual
+polish on nested elements.
+
+**Tech choice:** [`react-map-gl`](https://visgl.github.io/react-map-gl/)
+(MapLibre subpath) + [`maplibre-gl`](https://maplibre.org/). Imported
+explicitly as `react-map-gl/maplibre` to avoid pulling in Mapbox GL JS
+(different license, requires access token). Both deps exact-pinned per
+CLAUDE.md.
+
+**Tile source:** OpenFreeMap's `liberty` style via env-overridable URL
+`MAPLIBRE_TILE_URL` (default
+`https://tiles.openfreemap.org/styles/liberty`). Production tile
+source decision deferred to `trip-concierge-dj0`.
+
+**Destination pin pattern (v1.0a):**
+- Single Marker at the destination's coordinates (color: `#006565` to
+  match the spec §3.1 primary).
+- Popup anchored bottom of the pin with `closeButton={false}` and
+  `closeOnClick={false}` — always-open chrome.
+- Popup label format: `{N} day(s) in {City}` where City is the
+  substring of `trip.destination` before the first comma.
+- NavigationControl at top-right (zoom +/-; compass hidden).
+- AttributionControl at bottom-right per OpenFreeMap requirements
+  (legal — not optional).
+
+**Empty state:** When the destination doesn't match the hardcoded
+lookup table (`web/lib/destination-coords.ts`), render a dashed-border
+placeholder card with copy "Map for this destination isn't available
+yet." — honest about state without overstating cause.
+
+```tsx
+<TripMap destination={trip.destination} dayCount={trip.days.length} />
+```
+
+**v1.0b additions (deferred — see §17.11):** per-block pins,
+day-filtered visibility, color-coding per day, route lines between
+consecutive blocks, "Today" mode, tap-pin-to-scroll itinerary.
+
 ---
 
 ## 10. Dark mode
@@ -772,6 +830,25 @@ Slice 4.3 wires a Dialog confirm + Server Action POST to `/trips/{id}/plan` on f
 
 Spec §13 in v1.0 shows v3-syntax `tailwind.config.ts`. v1.0a project is on Tailwind v4 with CSS-first `@theme` blocks in `app/globals.css`. v1.1 to update §13 with v4 syntax (semantic content unchanged; mechanical syntax migration).
 
+### 17.11 Map panel — pin-less → pinned migration (v1.0a → v1.0b)
+
+§9.12 documents the v1.0a destination-centered map (single pin, no
+per-block pins). v1.0b transitions to:
+
+- Per-block pins (depends on `trip-concierge-423` backend lat/lng
+  population via crew prompts + geocoding integration)
+- Day-filtered pin visibility (depends on `trip-concierge-kue`'s UI
+  toggle work)
+- Day color-coding when "All days" toggle active
+- Route lines between consecutive blocks within a day (depends on
+  Directions API integration in `kue`)
+- Tap-pin-to-scroll itinerary to that block (state synchronization
+  between map and TripDay components)
+- "Today" mode (geolocation + current-block computation)
+
+v1.1 of the spec adds these patterns to §9.12 once the v1.0b backend
+work lands and the UX settles.
+
 ### 17.10 Motion language clarification — CSS-utility animations
 
 §11 states "No Framer Motion or other animation libraries (v1.0a)" — written with JS-based expressive motion libraries in mind. Slice 4.3 ships shadcn primitives that include `tw-animate-css` utilities for Sheet/Dialog enter/exit micro-interactions. These are CSS keyframe animations, not JS expressive motion, and don't violate §11's substance (restrained motion language for a thinking tool).
@@ -787,4 +864,5 @@ This isn't a behavior change — slice 4.3's animations are correct per §11's i
 
 ## Changelog
 
+- **v1.0.1** (2026-06-05) — Added §9.12 (Map panel, right rail) and §17.11 (pin-less → pinned migration v1.1 prep notes) from slice 4.4. Additive only — no breaking changes to existing tokens or patterns.
 - **v1.0** (2026-06-05) — Initial spec. Derived from Voyage Elite reference during slice 4.3 design dialogue. Trip Concierge brand framing established (thinking-tool, not marketplace). All tokens, patterns, and copy guidance defined.

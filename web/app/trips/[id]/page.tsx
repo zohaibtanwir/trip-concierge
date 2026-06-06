@@ -19,6 +19,7 @@ import { DayChipTimeline } from "@/components/day-chip-timeline";
 import { PlanAgainDialog } from "@/components/plan-again-dialog";
 import { PlanHistoryPanel } from "@/components/plan-history-panel";
 import { TripDay } from "@/components/trip-day";
+import { TripMap } from "@/components/trip-map";
 import { planAgainAction } from "@/lib/actions";
 import { fetchTripDetail, type PlanStatus } from "@/lib/backend";
 
@@ -142,10 +143,19 @@ export default async function TripDetailPage({ params }: DetailPageProps) {
             )}
           </div>
 
-          {/* === Right column (sticky on md+) === */}
+          {/* === Right column (sticky on md+) ===
+              Stack order (spec §9.2 + §9.12 from slice 4.4):
+                DayChipTimeline → TripMap → PlanHistoryPanel
+              TripMap visible on succeeded + failed states only
+              (same visibility as PlanHistoryPanel); planning state
+              shows the in-progress section in the left column with
+              no right-rail map. */}
           <aside className="col-span-12 md:col-span-4 md:sticky md:top-28 space-y-4">
             {trip.days.length > 0 && (
               <DayChipTimeline days={trip.days} currentDayId={trip.days[0]?.id} />
+            )}
+            {(isSucceeded || isFailed) && (
+              <TripMap destination={trip.destination} dayCount={trip.days.length} />
             )}
             {(isSucceeded || isFailed) && <PlanHistoryPanel agentSummary={agentSummary} />}
           </aside>

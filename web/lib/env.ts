@@ -47,4 +47,10 @@ export const env = {
   get INTERNAL_AUTH_SECRET() {
     return get("INTERNAL_AUTH_SECRET", "dev-only-internal-auth-do-not-use-in-prod");
   },
+  // Slice 4.4 — MapLibre tile source. Default to OpenFreeMap's free
+  // dev tiles. Production tile source decision tracked as
+  // trip-concierge-dj0 (Stadia / MapTiler / self-host).
+  get MAPLIBRE_TILE_URL() {
+    return get("MAPLIBRE_TILE_URL", "https://tiles.openfreemap.org/styles/liberty");
+  },
 };
