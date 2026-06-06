@@ -23,6 +23,10 @@ import { env } from "@/lib/env";
  *
  * Returns the new PlanStatus shape from the enqueue response so the
  * caller can update local UI optimistically.
+ *
+ * NOTE on signature: positional args; will refactor to object args under
+ * trip-concierge-u8v when the next slice consumes the pattern.
+ * addConstraintAction below is the first object-args Server Action.
  */
 export async function planAgainAction(tripId: string, userId: string): Promise<PlanStatus> {
   const { mcp_token } = await mintMcpToken({ userId });
@@ -37,4 +41,64 @@ export async function planAgainAction(tripId: string, userId: string): Promise<P
     );
   }
   return (await response.json()) as PlanStatus;
+}
+
+/**
+ * addConstraintAction — invoked by <ConstraintPanel /> on the trip
+ * detail page (slice 4.5). Consumes the existing slice-3.4a endpoint
+ * POST /trips/{id}/constraints which appends to Trip.constraints["rules"]
+ * AND auto-enqueues a refine job to incorporate the new constraint.
+ *
+ * Object-args pattern (first Server Action to adopt). Per
+ * trip-concierge-u8v, planAgainAction refactors to the same shape in a
+ * future slice for consistency.
+ *
+ * Caller-facing semantics: the user's plan is replaced with a refined
+ * version (~5-10 min). The constraint-panel UI surfaces this timing
+ * before the user submits — see spec §9.13.
+ */
+export interface AddConstraintResult {
+  job_id: string;
+  status_url: string;
+}
+
+export type ConstraintKind =
+  | "budget"
+  | "dietary"
+  | "mobility"
+  | "no_go"
+  | "walking_limit"
+  | "accessibility"
+  | "custom";
+
+export async function addConstraintAction({
+  tripId,
+  userId,
+  kind,
+  text,
+}: {
+  tripId: string;
+  userId: string;
+  kind: ConstraintKind;
+  text: string;
+}): Promise<AddConstraintResult> {
+  const { mcp_token } = await mintMcpToken({ userId });
+  const response = await fetch(`${env.BACKEND_URL}/trips/${tripId}/constraints`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-tc-token": mcp_token,
+    },
+    body: JSON.stringify({
+      constraint_text: text,
+      constraint_kind: kind,
+    }),
+  });
+  if (!response.ok) {
+    throw new BackendError(
+      response.status,
+      `addConstraintAction HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  return (await response.json()) as AddConstraintResult;
 }

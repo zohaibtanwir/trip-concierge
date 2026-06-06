@@ -188,6 +188,49 @@ def test_constraints_returns_409_when_job_in_flight_with_kind_label(
     assert "rules" not in trip.constraints or trip.constraints["rules"] == []
 
 
+def test_constraints_accepts_accessibility_kind(
+    authed_client: tuple[TestClient, User],
+    db_session: Session,
+) -> None:
+    """Slice 4.5 — `accessibility` kind added to the ConstraintKind Literal.
+
+    PRD §F4 lists accessibility flag as one of the constraint controls.
+    Slice 4.5's web constraint-panel surface ships a dedicated
+    accessibility toggle; the backend route must accept the
+    corresponding kind so the panel doesn't have to fall back to
+    "custom" with descriptive text (which would muddle the per-kind
+    framing in constraint_synthesizer).
+    """
+    client, user = authed_client
+    trip = _make_trip(db_session, user)
+    pool = _mock_pool()
+
+    with patch("app.routes.constraints.create_pool", return_value=pool):
+        resp = client.post(
+            f"/trips/{trip.id}/constraints",
+            json={
+                "constraint_text": "Wheelchair-accessible venues only",
+                "constraint_kind": "accessibility",
+            },
+        )
+
+    assert resp.status_code == 202, response_text(resp)
+    assert pool.enqueue_job.called, "accessibility constraint must enqueue refine"
+
+    db_session.refresh(trip)
+    rules = trip.constraints.get("rules", [])
+    assert len(rules) == 1
+    assert rules[0]["kind"] == "accessibility"
+
+
+def response_text(resp) -> str:
+    """Helper used only by the test above — flatten Pydantic 422 detail."""
+    try:
+        return resp.json()
+    except Exception:
+        return resp.text
+
+
 def test_synthesizer_is_deterministic_across_repeat_calls() -> None:
     """Same (kind, value, raw_text) triplet → byte-identical output.
     Pins out timestamps, random IDs, dict-order nondeterminism. Critical
