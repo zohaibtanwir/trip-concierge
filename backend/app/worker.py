@@ -429,13 +429,53 @@ async def _cleanup_redis_keys(redis: Any | None, trip_id: str, *, include_cancel
         await redis.delete(*keys)
 
 
+_RULE_KIND_TO_TRIP_STATE_KEY = {
+    # Slice 4.5b commit 1: per Q3=A, extract rule-shaped constraint
+    # values onto flat top-level keys at the backend boundary so the
+    # crew stays a pure consumer. Most-recent rule wins on duplicates
+    # (later index overrides earlier — rules are append-only and the
+    # latest reflects current intent).
+    "budget": "per_day_budget",  # synthesizer framing: "per-day budget cap"
+    "walking_limit": "max_walking_km",
+}
+
+
+def _extract_settings_from_rules(constraints: dict[str, Any] | None) -> dict[str, Any]:
+    """Pull per_day_budget + max_walking_km out of constraints.rules[].
+
+    Iterates rules in array order; the last matching kind wins, so the
+    user's most recent submission for a given kind is what reaches the
+    crew. Dietary/mobility/accessibility/no_go rules are ignored here —
+    they flow via the synthesized refinement_description from
+    services/constraint_synthesizer, not via crew-visible structured
+    fields.
+    """
+    if not constraints:
+        return {}
+    rules = constraints.get("rules") or []
+    extracted: dict[str, Any] = {}
+    for rule in rules:
+        kind = rule.get("kind")
+        target_key = _RULE_KIND_TO_TRIP_STATE_KEY.get(kind)
+        if target_key is None:
+            continue
+        # Latest wins — overwrite any earlier value at the same key.
+        extracted[target_key] = rule.get("value")
+    return extracted
+
+
 def _serialize_trip_for_crew(trip: Any) -> dict[str, Any]:
     """Flatten a Trip ORM object into the JSON-serializable dict shape that
     crew.refine and crew.regenerate_day expect. Includes the full days →
     blocks tree with each block's locked flag — the crew uses locked to
     decide what to preserve.
+
+    Slice 4.5b commit 1: per_day_budget + max_walking_km extracted from
+    trip.constraints.rules[] and flattened onto the top-level dict so
+    the crew's audit task template variables resolve to real values
+    instead of falling through to DEFAULT_INPUTS' 'unspecified'.
     """
-    return {
+    serialized: dict[str, Any] = {
         "destination": trip.destination,
         "currency": trip.currency,
         "budget_total": float(trip.budget_total) if trip.budget_total is not None else None,
@@ -464,6 +504,8 @@ def _serialize_trip_for_crew(trip: Any) -> dict[str, Any]:
             for d in trip.days
         ],
     }
+    serialized.update(_extract_settings_from_rules(trip.constraints))
+    return serialized
 
 
 def _block_orm_to_dict(b: Any) -> dict[str, Any]:

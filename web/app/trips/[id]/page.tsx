@@ -19,6 +19,7 @@ import { ConstraintList } from "@/components/constraint-list";
 import { ConstraintPanel } from "@/components/constraint-panel";
 import { DayChipTimeline } from "@/components/day-chip-timeline";
 import { PlanAgainDialog } from "@/components/plan-again-dialog";
+import { PlanControlsPanel } from "@/components/plan-controls-panel";
 import { PlanHistoryPanel } from "@/components/plan-history-panel";
 import { TripDay } from "@/components/trip-day";
 import { TripMap } from "@/components/trip-map";
@@ -147,18 +148,38 @@ export default async function TripDetailPage({ params }: DetailPageProps) {
 
           {/* === Right column (sticky on md+) ===
               Stack order (spec §9.2 + §9.12 from slice 4.4 + §9.13
-              from slice 4.5):
-                DayChipTimeline → TripMap → ConstraintPanel →
-                ConstraintList → PlanHistoryPanel
-              All five visible on succeeded + failed states only;
+              from slice 4.5 + §9.14 from slice 4.5b):
+                DayChipTimeline → TripMap → PlanControlsPanel →
+                ConstraintPanel → ConstraintList → PlanHistoryPanel
+              All six visible on succeeded + failed states only;
               planning state shows the in-progress section in the
-              left column with no right-rail tooling. */}
+              left column with no right-rail tooling.
+
+              PlanControlsPanel (settings overwrite) sits ABOVE
+              ConstraintPanel (rules accumulate) per the slice 4.5b
+              Q5=B settings-vs-rules ontology — column-write surface
+              before append-only surface. */}
           <aside className="col-span-12 md:col-span-4 md:sticky md:top-28 space-y-4">
             {trip.days.length > 0 && (
               <DayChipTimeline days={trip.days} currentDayId={trip.days[0]?.id} />
             )}
             {(isSucceeded || isFailed) && (
               <TripMap destination={trip.destination} dayCount={trip.days.length} />
+            )}
+            {(isSucceeded || isFailed) && (
+              <PlanControlsPanel
+                tripId={tripId}
+                userId={userId}
+                currentPace={
+                  (["packed", "balanced", "lazy"] as const).includes(
+                    trip.pace as "packed" | "balanced" | "lazy",
+                  )
+                    ? (trip.pace as "packed" | "balanced" | "lazy")
+                    : "balanced"
+                }
+                currentBudgetTotal={trip.budget_total === null ? null : Number(trip.budget_total)}
+                currency={trip.currency}
+              />
             )}
             {(isSucceeded || isFailed) && (
               <ConstraintPanel

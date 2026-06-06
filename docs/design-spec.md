@@ -567,7 +567,7 @@ BlockExpand pattern). Production page currently passes
 `forceVariant="inline"` — a `useMediaQuery` hook to resolve at runtime
 is tracked as P3 ticket `trip-concierge-gdm`.
 
-**v1.0a form sections (in order):**
+**Form sections (in order):**
 
 | Section | Control | Multi? | Wire kind |
 |---|---|---|---|
@@ -575,18 +575,22 @@ is tracked as P3 ticket `trip-concierge-gdm`.
 | Mobility | Radio group | no | `mobility` |
 | Accessibility | Single checkbox toggle | no | `accessibility` |
 | No-go | Text input + Add button + removable chip list | yes (one POST per entry) | `no_go` |
+| Walking limit | Numeric input + `km / day` suffix | no | `walking_limit` |
+| Per-day budget | Currency prefix + numeric input | no | `budget` |
 
-**Deferred to v1.0a-companion slice (`trip-concierge-cdr`):**
-Pace slider, total + per-day budget caps, walking-distance slider.
-These three controls require backend endpoints that don't exist yet
-(slice 3.4a's `POST /trips/{id}/constraints` accepts the six
-ConstraintKind values above + `walking_limit` and `budget`, but the
-LLM-facing prompts and Budget Auditor enforcement logic for caps
-aren't wired). v1.0a ships the visual + functional surface for the
-four already-supported kinds — explicit PRD §F4 partial-compliance.
+Slice 4.5 shipped the first 4 sections. Slice 4.5b extended the form
+with the bottom 2 (`walking_limit`, `budget`) — both rules-shaped
+(append to `constraints.rules[]`) per the settings-vs-rules ontology
+that distinguishes ConstraintPanel (rules accumulate) from
+PlanControlsPanel (§9.14, settings overwrite). Synthesizer framing
+already supported both kinds since slice 3.4a; slice 4.5b's commit 3
+added the form sections that surface them.
 
-**Submit semantics:**
+**Submit semantics (rules-shaped append):**
 - Button label: "Save and re-plan" / "Saving…" during pending state.
+  Distinct from PlanControlsPanel's "Update settings and re-plan" —
+  verb-as-data-semantic-disclosure: "Save" signals append, "Update"
+  signals overwrite.
 - Helper text below: "Your existing plan will be replaced with one
   that respects these constraints (~5-10 minutes)."
 - Each non-empty section becomes one POST. Submitting more than one
@@ -627,6 +631,89 @@ mapping in `web/components/constraint-list.tsx` AND the table above.
   forceVariant="inline"
 />
 <ConstraintList rules={trip.constraints?.rules ?? []} />
+```
+
+---
+
+### 9.14 Plan controls panel (right rail, settings-shaped)
+
+Added in v1.0.3 (slice 4.5b). Used on trip detail pages
+(`/trips/[id]`) to surface PRD §F4's settings-shaped controls (pace +
+total budget) — distinguished from §9.13's ConstraintPanel which holds
+the rules-shaped controls (dietary, mobility, etc.). The split exists
+because settings *overwrite* (last value wins on `Trip.pace` /
+`Trip.budget_total` columns) while rules *accumulate* (append to
+`Trip.constraints.rules[]` JSONB array). Same right-rail aside, two
+different data semantics — surfaced at three layers per slice 4.5b's
+Q5=B design dialogue:
+
+| Layer | Settings (this panel) | Rules (§9.13 ConstraintPanel) |
+|---|---|---|
+| Data | Postgres columns (`pace`, `budget_total`) | JSONB array (`constraints.rules[]`) |
+| API | `PATCH /trips/{id}` (overwrite) | `POST /trips/{id}/constraints` (append) |
+| UI verb | "Update settings and re-plan" | "Save and re-plan" |
+
+**Placement:** Right column, between TripMap (§9.12) and ConstraintPanel
+(§9.13). Order: DayChipTimeline → TripMap → **PlanControlsPanel** →
+ConstraintPanel → ConstraintList → PlanHistoryPanel. Visible on
+succeeded + failed trip states only.
+
+**Responsive variants:**
+
+- `inline` (desktop default in v1.0a): rounded-xl border container,
+  `bg-surface-container-lowest`, both sections rendered inline. h2 label
+  "Plan controls" at `text-label-md`.
+- `sheet` (mobile, deferred): trigger button "Plan controls" (outline
+  variant) opens a bottom Sheet (§17.3) with the same form contents
+  under a `text-headline-md` heading.
+
+`forceVariant` prop pins each variant in jsdom tests (mirror of §9.13
+ConstraintPanel + §17.4 BlockExpand patterns). Production page passes
+`forceVariant="inline"`. The `useMediaQuery` resolver is shared with
+ConstraintPanel — tracked under `trip-concierge-gdm` (same hook
+unblocks both panels).
+
+**v1.0a form sections (in order):**
+
+| Section | Control | Wire field |
+|---|---|---|
+| Pace | 3-state segmented control (aria-pressed buttons) — Packed / Balanced / Lazy | `pace` (Trip column) |
+| Total budget | Currency prefix + numeric input | `budget_total` (Trip column) |
+
+Pace's 3 buttons render with a description sub-line ("max blocks/day",
+"mix of pace", "low-key, downtime") for affordance — segmented control
+mirrors §9.13's chip pattern but with denser content per button.
+
+**Dirty-state submit:** the form tracks per-field divergence from the
+`current*` props. Submit button disabled until at least one field
+diverges. Submit no-ops when nothing changed — prevents the backend's
+at-least-one-of validator (PATCH route Pydantic
+`model_validator(mode='after')`) from 422'ing an empty body. **The UI
+is the first line of defense against the empty-PATCH round-trip;** the
+backend validator is the second line.
+
+**Submit semantics (settings-shaped overwrite):**
+- Button label: "Update settings and re-plan" / "Saving…" during
+  pending. Distinct from ConstraintPanel's "Save and re-plan" — the
+  verb signals the data semantic.
+- Helper text below: "Pace and budget changes overwrite the previous
+  values. Your plan will be replaced with one that respects the new
+  settings (~5-10 minutes)."
+- Server Action: `updateTripSettingsAction({tripId, userId, pace?,
+  budgetTotal?})` from `web/lib/actions.ts`. Omit-undefined
+  serialization: only fields the user explicitly changed appear in the
+  PATCH body. camelCase TS field `budgetTotal` → snake_case wire field
+  `budget_total`.
+
+```tsx
+<PlanControlsPanel
+  tripId={trip.id}
+  userId={session.user.id}
+  currentPace={trip.pace}
+  currentBudgetTotal={trip.budget_total === null ? null : Number(trip.budget_total)}
+  currency={trip.currency}
+  forceVariant="inline"
+/>
 ```
 
 ---
@@ -954,27 +1041,59 @@ This isn't a behavior change — slice 4.3's animations are correct per §11's i
 
 ---
 
-### 17.12 Constraint controls — partial PRD §F4 coverage in v1.0a
+### 17.12 PRD §F4 controls — partial-compliance discharged (historical note)
 
-Slice 4.5 ships the visual + functional surface for **four of seven** PRD §F4 acceptance bullets:
+This section preserves the timeline of how PRD §F4's 8-control surface
+shipped across two slices in v1.0a. The partial-compliance flag was
+load-bearing while live; preserving the record makes the
+architectural-foresight pattern legible to future readers (and to the
+Marsh narrative) rather than scrubbing it after the fact.
 
-- ✅ Dietary tags (multi-select)
-- ✅ Mobility (active / standard / walking-distance only / no-stairs)
-- ✅ Accessibility flag
-- ✅ No-go list (free-text)
-- ⏳ Total budget cap (deferred — `trip-concierge-cdr`)
-- ⏳ Per-day budget cap (deferred — `trip-concierge-cdr`)
-- ⏳ Max walking distance per day (deferred — `trip-concierge-cdr`)
-- ⏳ Pace slider (deferred — `trip-concierge-cdr`)
+**Slice 4.5 (z9o, merged 2026-06-06):** Shipped 4 of 8 §F4 controls
+via the rules-shaped path:
 
-The deferral isn't a UI gap — it's a wiring gap. The Budget Auditor agent enforcement loop (PRD §F4 bullet 2: "validates the full itinerary against caps before output is finalized; if exceeded, plan is sent back for revision") needs a backend endpoint surface for cap state and a per-day budget pass in `crew.py`. Adding chip controls without the enforcement loop would lie to the user — the constraint would render but not bind. v1.0a-companion (`4.5b`) lands the three cap controls together with the auditor wiring.
+- ✅ Dietary tags (multi-select) — `dietary` kind
+- ✅ Mobility (active / standard / walking-distance only / no-stairs) — `mobility` kind
+- ✅ Accessibility flag — `accessibility` kind
+- ✅ No-go list (free-text) — `no_go` kind
 
-v1.1 should converge the §F4 controls into a single section here once the auditor loop ships and the 7-bullet surface is complete. Until then, the partial-compliance framing belongs in BUILD_PLAN and in the Marsh demo narrative.
+Deferred to v1.0a-companion: pace slider, total budget cap, per-day
+budget cap, max walking distance per day. Reason: those four needed
+(a) a column-write surface for the settings-shaped state (pace,
+total_budget) and (b) Budget Auditor enforcement loop wiring for the
+caps — not just chip controls.
+
+**Slice 4.5b (cdr, merged 2026-06-06):** Discharged the remaining 4:
+
+- ✅ Pace slider — 3-state segmented control (Packed / Balanced /
+  Lazy) → `PATCH /trips/{id}` writes `Trip.pace` column
+- ✅ Total budget cap — numeric input → `PATCH /trips/{id}` writes
+  `Trip.budget_total` column
+- ✅ Per-day budget cap — numeric input added to ConstraintForm
+  (§9.13 row 6) → existing `POST /trips/{id}/constraints` with
+  `kind="budget"` (synthesizer framing: "Apply a new per-day budget
+  cap of {value}")
+- ✅ Max walking distance per day — numeric input added to
+  ConstraintForm (§9.13 row 5) → existing `POST` with
+  `kind="walking_limit"`
+
+PLUS: Budget Auditor enforcement loop wiring in `refine_trip`
+(`MAX_REFINE_AUDIT_PASSES = 2` in `agents/crew.py`, mirror of
+`MAX_AUDIT_PASSES`). Settings-vs-rules ontology surfaced at three
+layers (data column vs JSONB array → API PATCH vs POST → UI "Update
+settings" vs "Save and re-plan") and codified in §9.14
+PlanControlsPanel.
+
+**§F4 fully discharged in v1.0a.** Phase 5 closeout review no longer
+needs to gate on §F4 — the 8-control surface ships complete. The flag
+preserved here documents the timeline; the design substrate (§9.13 +
+§9.14) documents the current state.
 
 ---
 
 ## Changelog
 
+- **v1.0.3** (2026-06-06) — Added §9.14 (PlanControlsPanel, settings-shaped right-rail panel) from slice 4.5b. Extended §9.13 ConstraintPanel form sections from 4 → 6 (adds Walking limit + Per-day budget rules-shaped rows). Rewrote §17.12 as historical "partial-compliance discharged" note — PRD §F4's 8-control surface now ships complete across slices 4.5 + 4.5b. Additive only — no breaking changes.
 - **v1.0.2** (2026-06-06) — Added §9.13 (Constraint panel + read-only chip list) and §17.12 (PRD §F4 partial-coverage rationale) from slice 4.5. Additive only — no breaking changes to existing tokens or patterns.
 - **v1.0.1** (2026-06-05) — Added §9.12 (Map panel, right rail) and §17.11 (pin-less → pinned migration v1.1 prep notes) from slice 4.4. Additive only — no breaking changes to existing tokens or patterns.
 - **v1.0** (2026-06-05) — Initial spec. Derived from Voyage Elite reference during slice 4.3 design dialogue. Trip Concierge brand framing established (thinking-tool, not marketplace). All tokens, patterns, and copy guidance defined.

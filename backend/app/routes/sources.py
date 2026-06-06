@@ -45,7 +45,6 @@ from app.auth.dependencies import require_mcp_token
 from app.config import settings
 from app.db.session import get_session
 from app.models.user import User
-from app.routes.plan import KIND_LABELS, decode_active_value
 from app.services import source_ingestion, trip_service
 from app.services.source_ingestion import (
     ContentTooLargeError,
@@ -53,6 +52,7 @@ from app.services.source_ingestion import (
     FetchFailedError,
     UnsupportedContentTypeError,
 )
+from app.services.trip_lock import KIND_LABELS, decode_active_value
 
 router = APIRouter(prefix="/trips", tags=["sources"])
 

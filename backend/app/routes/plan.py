@@ -51,17 +51,18 @@ from app.db.session import get_session
 from app.models.job_run import JobRun
 from app.schemas.plan import JobKind, PlanState, PlanStatus, ProgressUpdate
 from app.services import trip_service
+from app.services.trip_lock import (
+    ACTIVE_JOB_KEY_TTL_SECONDS,
+    KIND_LABELS,
+    decode_active_value,
+    encode_active_value,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/trips", tags=["plan"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
-
-# Redis key holding the active job_id for a given trip. TTL matches the
-# worker's job_timeout so orphaned keys clear themselves even if the
-# worker process crashes without writing a JobRun.
-_ACTIVE_JOB_KEY_TTL_SECONDS = 900
 
 # Cancelling tombstone TTL — generous enough to cover the worker's
 # CancelledError → JobRun write path (sub-second in practice) plus DB
@@ -74,43 +75,6 @@ def _decode(value: bytes | str | None) -> str | None:
     if value is None:
         return None
     return value.decode() if isinstance(value, bytes) else str(value)
-
-
-# Slice 3.3: the active_job Redis value widened from a plain string
-# (just the arq job_id) to JSON carrying both job_id and kind. Refine
-# and regen routes write the same key with their own kind label, and
-# GET /status surfaces it back via PlanStatus.kind.
-KIND_LABELS: dict[str, str] = {
-    "plan": "planning",
-    "refine": "refinement",
-    "regen": "day regeneration",
-}
-
-
-def encode_active_value(*, job_id: str, kind: JobKind) -> str:
-    """Build the JSON payload written to trip:{id}:active_job."""
-    return json.dumps({"job_id": job_id, "kind": kind})
-
-
-def decode_active_value(raw: bytes | str | None) -> tuple[str, str] | None:
-    """Return (job_id, kind) from the active_job Redis value, or None
-    if the key is absent.
-
-    Tolerates legacy plain-string entries (anything written by pre-3.3
-    code that didn't know about kind) by treating them as kind='plan'.
-    Graceful degradation, not a crash — the value's only purpose is
-    routing follow-up calls, and 'plan' is the right default for legacy.
-    """
-    if raw is None:
-        return None
-    text = raw.decode() if isinstance(raw, bytes) else str(raw)
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict) and "job_id" in obj:
-            return str(obj["job_id"]), str(obj.get("kind", "plan"))
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return text, "plan"
 
 
 def _build_request(trip: Any) -> TripRunRequest:
@@ -182,7 +146,7 @@ async def enqueue_plan(trip_id: uuid.UUID, db: SessionDep) -> dict[str, str]:
 
     await redis.setex(
         active_key,
-        _ACTIVE_JOB_KEY_TTL_SECONDS,
+        ACTIVE_JOB_KEY_TTL_SECONDS,
         encode_active_value(job_id=job.job_id, kind="plan"),
     )
 

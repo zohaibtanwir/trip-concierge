@@ -18,6 +18,7 @@ from app.routes import (
     regenerate,
     shared,
     sources,
+    trip_settings,
     trips,
 )
 
@@ -45,6 +46,7 @@ app.include_router(plan.router)
 app.include_router(refine.router)
 app.include_router(regenerate.router)
 app.include_router(constraints.router)
+app.include_router(trip_settings.router)
 app.include_router(alternative.router)
 app.include_router(sources.router)
 app.include_router(explain.router)
