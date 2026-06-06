@@ -565,7 +565,7 @@ states only.
 `forceVariant` prop pins each variant in jsdom tests (mirror of §17.4
 BlockExpand pattern). Production page currently passes
 `forceVariant="inline"` — a `useMediaQuery` hook to resolve at runtime
-is tracked as P3 ticket `trip-concierge-5gf`.
+is tracked as P3 ticket `trip-concierge-gdm`.
 
 **v1.0a form sections (in order):**
 

@@ -324,8 +324,8 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
 - **Followup tickets filed:**
   - `trip-concierge-cdr` (P1): v1.0a-companion — pace slider + total/per-day budget caps + walking-distance slider + Budget Auditor enforcement loop wiring (§F4 bullets 2/3/4).
   - `trip-concierge-hr2` (P3): DELETE `/trips/{id}/constraints/{rule_idx}` endpoint + ConstraintList chip removal UI.
-  - `trip-concierge-5gf` (P3): `useMediaQuery` runtime resolution for ConstraintPanel `forceVariant` (currently inline-only on page).
-  - `trip-concierge-wce` (P2): Web trip creation positioning decision — v1.0a deliberately defers web-side trip creation in favor of MCP-first narrative (Claude Desktop creates, PWA manages). Tracked for v1.0b reconsideration.
+  - `trip-concierge-gdm` (P3, pre-existing): `useMediaQuery` runtime resolution for ConstraintPanel `forceVariant` (currently inline-only on page).
+  - `trip-concierge-xcs` (P2, pre-existing): Web trip creation positioning decision — v1.0a deliberately defers web-side trip creation in favor of MCP-first narrative (Claude Desktop creates, PWA manages). Tracked for v1.0b reconsideration.
 - **Tickets closed in this slice:**
   - `trip-concierge-z9o`: Constraint controls (closed at merge).
 - **Merge:** _<placeholder — post-merge footer convention>_
