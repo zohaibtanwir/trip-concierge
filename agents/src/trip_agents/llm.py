@@ -38,12 +38,22 @@ def get_langfuse() -> Langfuse | None:
     os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
     os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
     os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+    # Slice 4d0: environment must be passed as constructor kwarg — SDK
+    # v4 does NOT auto-read LANGFUSE_ENVIRONMENT from os.environ.
+    # Verified empirically (see config.py comment on langfuse_environment).
     _langfuse_client = Langfuse(
         public_key=settings.langfuse_public_key,
         secret_key=settings.langfuse_secret_key,
         host=settings.langfuse_host,
+        environment=settings.langfuse_environment,
     )
-    logger.info("Langfuse initialized", extra={"host": settings.langfuse_host})
+    logger.info(
+        "Langfuse initialized",
+        extra={
+            "host": settings.langfuse_host,
+            "environment": settings.langfuse_environment,
+        },
+    )
     return _langfuse_client
 
 

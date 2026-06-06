@@ -43,6 +43,18 @@ class Settings(BaseSettings):
         default="https://cloud.langfuse.com",
         validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
     )
+    # Slice 4d0 — Langfuse SDK v4 does NOT auto-read LANGFUSE_ENVIRONMENT
+    # from os.environ (verified empirically against cloud.langfuse.com:
+    # test trace with env var set landed in environment="default"; trace
+    # with explicit Langfuse(environment=...) kwarg landed in
+    # environment="production"). The env var must be passed as a
+    # constructor kwarg via get_langfuse(). Default "default" preserves
+    # existing trace partition behavior for callers that don't set the
+    # var — backward-compat for the 1020 default-partition traces.
+    langfuse_environment: str = Field(
+        default="default",
+        validation_alias="LANGFUSE_ENVIRONMENT",
+    )
 
     redis_url: str = Field(
         default="redis://localhost:6379",
