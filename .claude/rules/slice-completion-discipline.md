@@ -20,6 +20,7 @@ After a PR is approved:
 4. **Merge the PR** — squash + delete branch. This is the step that gets skipped or postponed.
 5. `git checkout main && git pull` — verify the merge commit is local.
 5a. **If the slice added a migration:** run `make db.migrate` locally against the dev DB and verify `alembic_version` matches the new head. The CI test DB getting `upgrade head` automatically per test session does NOT mean the dev DB advanced — they're different databases. See "How step 5a entered the rule" below.
+5b-1. **Archive any long-lived service log before killing the process being restarted in Step 5b.** Move (don't copy — preserve filesystem state for the next run) every active service-process log to a timestamped pre-merge archive filename: `mv /tmp/{worker,uvicorn,...}.log /tmp/{worker,uvicorn,...}.slice-<slice-id>-pre-merge-$(date +%Y%m%d-%H%M%S).log`. Apply to EVERY service log the slice's restarted processes own — not just `worker.log`. The archive is forensic evidence: post-merge incident triage often starts at the question "what was the worker doing for the hour before we restarted it?" and the answer evaporates if you let the new process truncate the log on startup. See "How step 5b-1 entered the rule" below.
 5b. **If the slice modifies a long-lived worker process** (arq workers, daemons, agent loops, MCP server stdio process), restart the worker after merge AND before declaring the slice complete. Verify the new code is loaded by checking a process attribute (PID changed, start time matches the restart, etc.). For dzc-a / qek-a style observability slices: ALSO trigger a known input that exercises the new instrumentation, to confirm the wiring fires end-to-end. A merged-but-not-running observability commit is silently broken. See "How step 5b entered the rule" below.
 6. `bd close <ticket-id>` — only now.
 7. `bd ready` — confirm the next slice surfaces clean and the dependency graph is honest.
@@ -67,6 +68,16 @@ The class of bug is shaped like step 5a's migration drift but with a different r
 Same shape, different "runtime that's out of sync with main." Both fail silently for the same reason — the gap between "merged" and "loaded by the running process."
 
 The agentic-systems subtlety: with multi-minute feedback loops (a single crew run is ~9 min and ~$0.40), you cannot afford to wait passively for the next failure to validate that observability fires. After a worker restart, deliberately trigger a known input that exercises the new instrumentation. For dzc-a, that's a fresh `create_trip` with the same shape as the bug-triggering input. For qek-a, it's any `create_trip` (the callback_summary entry should appear in `agent_summary` for every JobRun, success or failure).
+
+## How step 5b-1 entered the rule
+
+By slice 4.5b (2026-06-06) the archive-before-kill ritual had been applied informally seven times across slices dzc-a, qek-a, qek-b, slice 4.3, slice 4.4, slice 4.5, and slice 4.5b. Past the threshold where ad-hoc-by-discipline becomes "this is real, formalize it."
+
+The first instance (dzc-a / qek-a, 2026-05-30) was specifically `worker.log` — the rule was framed around the worker because that's where the observability lived. Subsequent instances surfaced the actual generalization: every service-process the slice restarts has its own log, and any of them could carry forensic evidence the next failure needs. Slice 4.5b made this explicit: the merge restarted both `arq` worker AND uvicorn (worker because crew.py + tasks.py + prompts.md changed; uvicorn because the new PATCH /trips/{id} route and serializer extraction needed to load). Both `/tmp/worker.log` (123K) AND `/tmp/uvicorn.log` (999B) existed; both were archived before kill. Had the rule still named only `worker.log`, the uvicorn log would have been truncated by the new process on restart and any forensic trail there would have evaporated.
+
+**The class of bug this preserves evidence for:** post-merge incident triage often starts at "what was the running process doing in the hour before we restarted it?" — patterns of 4xx responses, dropped Redis connections, agent failures the new code doesn't reproduce, callback firings, etc. If the log truncates on restart you lose the window. The archive is cheap (one `mv` per log file); the absence of the archive is expensive (debugging without forensic evidence on a multi-minute-feedback-loop system).
+
+**Why "every service log" not "worker.log":** slice 4.5b uvicorn restart caught a uvicorn-startup failure on the first attempt (DATABASE_URL not in subshell env) that took two iterations to fix. Without the archive of the prior uvicorn.log, the "what was the old process responding to before kill" question would have had no answer. Generalize.
 
 ## Mechanical guard (future)
 
