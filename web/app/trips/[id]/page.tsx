@@ -185,6 +185,7 @@ export default async function TripDetailPage({ params }: DetailPageProps) {
               <ConstraintPanel
                 tripId={tripId}
                 userId={userId}
+                currency={trip.currency}
                 existingRules={
                   (
                     trip.constraints as {

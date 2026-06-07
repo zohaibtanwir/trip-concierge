@@ -180,8 +180,12 @@ describe("/trips/[id] detail page", () => {
   });
 
   it("renders agent_summary via <PlanHistoryPanel /> on succeeded branch", async () => {
-    // Slice 4.3 — PRD §F8 partial. The sticky right panel includes the
-    // 'How this plan was made' surface, sourced from planStatus.agent_summary.
+    // Slice 4.3 — PRD §F8 partial. Fixture shape updated during slice
+    // 4d0 Sunday smoke (2026-06-07) to match the actual backend
+    // contract — {event, timestamp, elapsed_ms, output_excerpt}, not
+    // the pre-qek-a {agent, step, duration_ms, tokens}. See
+    // plan-history-panel.test.tsx for the standalone component-level
+    // tests + the fixture-self-reference observation.
     const backend = await import("@/lib/backend");
     (backend.fetchTripDetail as ReturnType<typeof vi.fn>).mockResolvedValue({
       trip: { ..._TRIP_BASE, days: [] },
@@ -190,7 +194,14 @@ describe("/trips/[id] detail page", () => {
         approved: true,
         job_id: "job-ok",
         kind: "plan",
-        agent_summary: [{ agent: "Researcher", step: 1, duration_ms: 32500, tokens: 1840 }],
+        agent_summary: [
+          {
+            event: "AgentFinish",
+            timestamp: "2026-06-06T16:12:12.550713+00:00",
+            elapsed_ms: 224413,
+            output_excerpt: "Sample researcher output",
+          },
+        ],
       },
     });
 
@@ -199,10 +210,11 @@ describe("/trips/[id] detail page", () => {
 
     // PlanHistoryPanel header surface.
     expect(screen.getByText(/how this plan was made/i)).toBeDefined();
-    // Agent row visible (the panel renders agents inline; if a future change
-    // collapses by default the test would need adjustment but the assertion
-    // confirms the surface exists at the page level).
-    expect(screen.getByText(/Researcher/)).toBeDefined();
+    // Event label visible. The panel surfaces "AgentFinish" + time +
+    // duration per Option C from the slice 4d0 smoke triage dialogue —
+    // agent_role enrichment to show "Researcher" instead of "AgentFinish"
+    // is tracked as a separate P2 backend follow-up.
+    expect(screen.getByText(/AgentFinish/)).toBeDefined();
   });
 
   it("renders the no_job fallback section when planStatus.state === 'no_job'", async () => {

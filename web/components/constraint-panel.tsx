@@ -28,10 +28,20 @@ interface ConstraintPanelProps {
   tripId: string;
   userId: string;
   existingRules: Array<{ kind: string; value: string; raw_text: string }>;
+  // Slice 4d0 smoke (2026-06-07): added so the per-day budget input in
+  // ConstraintForm renders the trip's actual currency, not the default
+  // USD. Slice 4.5b commit 3 added currency? on ConstraintForm but
+  // didn't thread it from the page.tsx caller through this wrapper.
+  currency?: string;
   forceVariant?: "sheet" | "inline";
 }
 
-export function ConstraintPanel({ tripId, userId, forceVariant = "inline" }: ConstraintPanelProps) {
+export function ConstraintPanel({
+  tripId,
+  userId,
+  currency,
+  forceVariant = "inline",
+}: ConstraintPanelProps) {
   async function _handleSubmit(entries: ConstraintSubmission[]) {
     for (const entry of entries) {
       await addConstraintAction({
@@ -50,7 +60,7 @@ export function ConstraintPanel({ tripId, userId, forceVariant = "inline" }: Con
         <SheetContent side="bottom">
           <div className="p-4">
             <h2 className="text-headline-md text-on-surface mb-4">Constraints</h2>
-            <ConstraintForm onSubmit={_handleSubmit} />
+            <ConstraintForm onSubmit={_handleSubmit} currency={currency} />
           </div>
         </SheetContent>
       </Sheet>
@@ -60,7 +70,7 @@ export function ConstraintPanel({ tripId, userId, forceVariant = "inline" }: Con
   return (
     <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-4">
       <h2 className="text-label-md text-on-surface mb-4">Constraints</h2>
-      <ConstraintForm onSubmit={_handleSubmit} />
+      <ConstraintForm onSubmit={_handleSubmit} currency={currency} />
     </div>
   );
 }

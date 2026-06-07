@@ -93,10 +93,24 @@ export interface TripFull {
 }
 
 export interface AgentSummaryRow {
-  agent: string;
-  step: number;
-  duration_ms: number;
-  tokens?: number;
+  // Slice 4d0 smoke (2026-06-07): updated to match the actual backend
+  // contract from qek-a's step_callback (shipped sometime between
+  // slice 4.3 and slice 4.5b). The pre-qek-a shape
+  // {agent, step, duration_ms, tokens} was self-referential in the
+  // PlanHistoryPanel fixture — tests passed against the fixture while
+  // the backend shipped a different shape. Caught at Sunday morning
+  // smoke, fixed by aligning the type with what JobRun.agent_summary
+  // actually contains.
+  event: "AgentFinish" | "task_completed" | "callback_summary";
+  timestamp: string;
+  elapsed_ms: number;
+  output_excerpt?: string;
+  // Only present on task_completed events (the CrewAI hook layout
+  // emits these alongside AgentFinish events).
+  task_index?: number;
+  // agent_role would be ideal here so the UI can show "Researcher"
+  // instead of just "AgentFinish" — tracked as P2 follow-up for the
+  // backend step_callback to capture agent.role at fire-time.
 }
 
 export interface PlanStatus {
