@@ -718,6 +718,70 @@ backend validator is the second line.
 
 ---
 
+### 9.15 Activity panel summary-row pattern
+
+Added in v1.0.4 (slice 4d0 Sunday smoke fix, 2026-06-07). Used by
+`PlanHistoryPanel` to render the `callback_summary` row at the bottom
+of the "How this plan was made" activity list, distinguished
+structurally from the per-event `AgentFinish` rows above it.
+
+**Why this pattern exists:** activity panels typically render a list of
+heterogeneous events that share a discriminator field but carry
+different field sets per discriminator value. PlanHistoryPanel's
+`agent_summary` JSONB array surfaces three event types — `AgentFinish`
+(per-agent completion with timestamp + elapsed), `task_completed`
+(redundant CrewAI hook, filtered out), and `callback_summary` (the
+final qek-a observability tally with `step_callback_count` +
+`task_callback_count` instead of timing fields). The summary row needs
+visual treatment that signals "this is a footer summary, not another
+per-event row" without losing the panel's visual rhythm.
+
+**Visual treatment:**
+
+| Element | Per-event row (e.g., `AgentFinish`) | Summary footer row (e.g., `callback_summary`) |
+|---|---|---|
+| Icon | `psychology` (Material Symbols) — agent identity | `summarize` — explicitly footer-summary semantic |
+| Label weight | normal | **`font-semibold`** |
+| Background | `bg-surface-container-lowest` (panel default) | `bg-surface-container-low` (one step elevated) |
+| Padding | `space-y-3` rhythm from `<ul>` | `px-2 py-1.5` + `mt-2` to visually break from the list above |
+| Border radius | n/a (list item) | `rounded-md` (chip-like footer container) |
+| Content layout | label · time · elapsed | label + count-tally on the right (`ml-auto`) |
+| Timing columns | timestamp + elapsed_ms rendered | OMITTED — summary doesn't carry per-event timing |
+| Right-side content | duration in `_formatDuration()` | count tally: `"N step events · M task events"` |
+
+**Implementation pattern — TypeScript discriminated union:**
+
+```typescript
+export type AgentSummaryRow =
+  | AgentSummaryAgentFinishRow      // { event, timestamp, elapsed_ms, output_excerpt? }
+  | AgentSummaryTaskCompletedRow    // { event, timestamp, elapsed_ms, output_excerpt?, task_index }
+  | AgentSummaryCallbackSummaryRow; // { event, step_callback_count, task_callback_count }
+```
+
+The component branches on `row.event` and dispatches to a variant-specific
+sub-component (`<_AgentFinishRow>` vs `<_CallbackSummaryRow>`). TypeScript
+narrowing forces each sub-component to read only the fields its event
+type actually has — preventing the `_formatDuration(undefined) → "undefinedms"`
+class of bug at compile time.
+
+**When to use this pattern:** any activity-panel-shaped surface that
+renders a heterogeneous event list with one or more summary-typed
+discriminator values. Examples: trip refinement history (per-edit rows
++ final approval summary), source ingestion log (per-URL rows + batch
+summary), notification feed (per-notification rows + digest summary).
+
+**When NOT to use:** lists of structurally homogeneous events (same
+field set per row) — render those as a flat `<ul>` without the
+summary-row footer. The pattern earns its complexity only when the
+data is actually heterogeneous; applying it to homogeneous lists adds
+visual noise without information gain.
+
+**Code reference:** `web/components/plan-history-panel.tsx` —
+`_AgentFinishRow` + `_CallbackSummaryRow` sub-components. Spec aligned
+with the discriminated union in `web/lib/backend.ts`.
+
+---
+
 ## 10. Dark mode
 
 **Deferred to Phase 5.** v1.0a ships light mode only.
@@ -1093,6 +1157,7 @@ preserved here documents the timeline; the design substrate (§9.13 +
 
 ## Changelog
 
+- **v1.0.4** (2026-06-07) — Added §9.15 (Activity panel summary-row pattern) from slice 4d0 Sunday smoke fix. Documents the discriminated-union + branched-render pattern for heterogeneous event panels (PlanHistoryPanel's `callback_summary` vs `AgentFinish` rows). Additive only — no breaking changes.
 - **v1.0.3** (2026-06-06) — Added §9.14 (PlanControlsPanel, settings-shaped right-rail panel) from slice 4.5b. Extended §9.13 ConstraintPanel form sections from 4 → 6 (adds Walking limit + Per-day budget rules-shaped rows). Rewrote §17.12 as historical "partial-compliance discharged" note — PRD §F4's 8-control surface now ships complete across slices 4.5 + 4.5b. Additive only — no breaking changes.
 - **v1.0.2** (2026-06-06) — Added §9.13 (Constraint panel + read-only chip list) and §17.12 (PRD §F4 partial-coverage rationale) from slice 4.5. Additive only — no breaking changes to existing tokens or patterns.
 - **v1.0.1** (2026-06-05) — Added §9.12 (Map panel, right rail) and §17.11 (pin-less → pinned migration v1.1 prep notes) from slice 4.4. Additive only — no breaking changes to existing tokens or patterns.

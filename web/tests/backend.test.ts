@@ -18,6 +18,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AGENT_FINISH_FIXTURE, CALLBACK_SUMMARY_FIXTURE } from "@/tests/fixtures/agent-summary";
+
 const _ORIG_FETCH = global.fetch;
 
 beforeEach(() => {
@@ -256,10 +258,10 @@ describe("fetchTripDetail", () => {
     // Slice 4.3 — PRD §F8 partial. The 'How this plan was made' panel
     // reads detail.planStatus.agent_summary. Pins that the type and the
     // wire path flow through fetchTripDetail unchanged.
-    const sampleSummary = [
-      { agent: "Researcher", step: 1, duration_ms: 32500, tokens: 1840 },
-      { agent: "Local Expert", step: 2, duration_ms: 28100, tokens: 1560 },
-    ];
+    // Slice 4d0 smoke (2026-06-07): fixture imported from shared module
+    // — three test files previously had three independent copies of the
+    // pre-qek-a shape. See web/tests/fixtures/agent-summary.ts.
+    const sampleSummary = [AGENT_FINISH_FIXTURE, CALLBACK_SUMMARY_FIXTURE];
     _mockFetchSequence([
       _jsonResponse({ mcp_token: "jwt", expires_at: "x" }),
       _jsonResponse({

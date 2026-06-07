@@ -1,20 +1,22 @@
 /**
  * PlanHistoryPanel — "How this plan was made" surface.
  *
- * Slice 4.3 (PRD §F8 partial) — repaired during slice 4d0 Sunday smoke
- * (2026-06-07) when the original fixture-self-referential schema
- * mismatch was caught: backend ships qek-a shape
- * {event, timestamp, elapsed_ms, output_excerpt}, not the pre-qek-a
- * shape {agent, step, duration_ms, tokens} the component used to read.
+ * Slice 4.3 (PRD §F8 partial) — refactored during slice 4d0 Sunday
+ * smoke (2026-06-07) when callback_summary's structural heterogeneity
+ * from AgentFinish was caught. AgentSummaryRow is now a discriminated
+ * union; the component branches per `event` value to render each
+ * variant with its actual field set.
  *
- * Filter logic (Option C from the smoke triage dialogue):
- * - Surface AgentFinish events (the actual agent work)
- * - Surface callback_summary (final qek-a observability marker)
- * - Skip task_completed (redundant CrewAI hook fired alongside each
- *   AgentFinish, no additional signal)
+ * Filter logic (Option C from triage dialogue):
+ * - AgentFinish — per-agent completion, renders with timestamp + elapsed
+ * - callback_summary — final qek-a observability tally, renders with
+ *   summary-row visual treatment (bold + tinted background + summarize
+ *   icon + count semantic, no timing columns)
+ * - task_completed — redundant CrewAI hook fired alongside each
+ *   AgentFinish, no additional signal — filtered out
  *
- * Display: "{event} · {time} · {elapsed}" — honest about the data
- * available without backend agent_role enrichment (tracked as P2).
+ * Spec reference: design-spec.md §9.15 documents the summary-row pattern
+ * for activity panel footers.
  *
  * Tap-to-expand-step-reasoning per PRD §F8 acceptance still deferred to
  * a future slice (trip-concierge-gco backend enrichment + auu §17.5).
@@ -25,7 +27,11 @@
 
 "use client";
 
-import type { AgentSummaryRow } from "@/lib/backend";
+import type {
+  AgentSummaryAgentFinishRow,
+  AgentSummaryCallbackSummaryRow,
+  AgentSummaryRow,
+} from "@/lib/backend";
 
 function _formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
@@ -33,15 +39,50 @@ function _formatDuration(ms: number): string {
 }
 
 function _formatTime(iso: string): string {
-  // Render HH:MM:SS in the user's local timezone for human readability.
-  // The raw ISO timestamp is preserved in the key so duplicate event
-  // labels (multiple AgentFinish in one trace) don't collide.
   try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString(undefined, { hour12: false });
+    return new Date(iso).toLocaleTimeString(undefined, { hour12: false });
   } catch {
     return iso.slice(11, 19);
   }
+}
+
+function _AgentFinishRow({ row }: { row: AgentSummaryAgentFinishRow }) {
+  return (
+    <li key={`${row.event}-${row.timestamp}`} className="flex items-baseline justify-between gap-4">
+      <div className="flex items-center gap-2">
+        <span className="material-symbols-outlined text-primary text-base" aria-hidden>
+          psychology
+        </span>
+        <span className="text-label-md text-on-surface">{row.event}</span>
+        <span className="text-label-sm text-on-surface-variant">{_formatTime(row.timestamp)}</span>
+      </div>
+      <span className="text-label-sm text-on-surface-variant">
+        {_formatDuration(row.elapsed_ms)}
+      </span>
+    </li>
+  );
+}
+
+function _CallbackSummaryRow({ row }: { row: AgentSummaryCallbackSummaryRow }) {
+  // Summary-row visual treatment (spec §9.15): bold weight + subtle
+  // surface-container-low background + summarize icon + count tally
+  // instead of timing columns. Marks this row as the activity-panel
+  // footer / qek-a observability tally, structurally distinct from
+  // per-event AgentFinish rows.
+  return (
+    <li
+      key={`${row.event}`}
+      className="flex items-baseline gap-2 mt-2 px-2 py-1.5 rounded-md bg-surface-container-low font-semibold"
+    >
+      <span className="material-symbols-outlined text-primary text-base" aria-hidden>
+        summarize
+      </span>
+      <span className="text-label-md text-on-surface">Callback summary</span>
+      <span className="text-label-sm text-on-surface-variant ml-auto">
+        {row.step_callback_count} step events · {row.task_callback_count} task events
+      </span>
+    </li>
+  );
 }
 
 export function PlanHistoryPanel({
@@ -51,6 +92,8 @@ export function PlanHistoryPanel({
   agentSummary: AgentSummaryRow[];
   defaultExpanded?: boolean;
 }) {
+  // Filter task_completed (redundant CrewAI hook). AgentFinish +
+  // callback_summary both surface meaningful, distinct signal.
   const visible = agentSummary.filter(
     (row) => row.event === "AgentFinish" || row.event === "callback_summary",
   );
@@ -69,25 +112,15 @@ export function PlanHistoryPanel({
           </p>
         ) : (
           <ul className="space-y-3">
-            {visible.map((row) => (
-              <li
-                key={`${row.event}-${row.timestamp}`}
-                className="flex items-baseline justify-between gap-4"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-base" aria-hidden>
-                    psychology
-                  </span>
-                  <span className="text-label-md text-on-surface">{row.event}</span>
-                  <span className="text-label-sm text-on-surface-variant">
-                    {_formatTime(row.timestamp)}
-                  </span>
-                </div>
-                <span className="text-label-sm text-on-surface-variant">
-                  {_formatDuration(row.elapsed_ms)}
-                </span>
-              </li>
-            ))}
+            {visible.map((row) => {
+              // TypeScript narrowing on row.event picks the right
+              // variant component. Compile-time exhaustiveness check
+              // protects against future event-type additions.
+              if (row.event === "AgentFinish") {
+                return <_AgentFinishRow key={`${row.event}-${row.timestamp}`} row={row} />;
+              }
+              return <_CallbackSummaryRow key={`${row.event}`} row={row} />;
+            })}
           </ul>
         )}
       </div>

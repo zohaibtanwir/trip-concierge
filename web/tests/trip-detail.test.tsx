@@ -18,6 +18,8 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AGENT_FINISH_FIXTURE } from "@/tests/fixtures/agent-summary";
+
 // Hoisted by vitest. Per-test behavior is configured via the mocked
 // module's .mockResolvedValue() in each test body.
 vi.mock("@/auth", () => ({
@@ -194,14 +196,7 @@ describe("/trips/[id] detail page", () => {
         approved: true,
         job_id: "job-ok",
         kind: "plan",
-        agent_summary: [
-          {
-            event: "AgentFinish",
-            timestamp: "2026-06-06T16:12:12.550713+00:00",
-            elapsed_ms: 224413,
-            output_excerpt: "Sample researcher output",
-          },
-        ],
+        agent_summary: [AGENT_FINISH_FIXTURE],
       },
     });
 

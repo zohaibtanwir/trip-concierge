@@ -32,45 +32,15 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { AgentSummaryRow } from "@/lib/backend";
+import {
+  CALLBACK_SUMMARY_FIXTURE,
+  FULL_SUMMARY_FIXTURE,
+  TASK_COMPLETED_FIXTURE,
+} from "@/tests/fixtures/agent-summary";
 
 afterEach(() => cleanup());
 
-const _SUMMARY: AgentSummaryRow[] = [
-  {
-    event: "AgentFinish",
-    timestamp: "2026-06-06T16:12:12.550713+00:00",
-    elapsed_ms: 224413,
-    output_excerpt: "Great — I now have the geographic context to anchor the cost validation.",
-  },
-  {
-    event: "AgentFinish",
-    timestamp: "2026-06-06T16:13:33.509855+00:00",
-    elapsed_ms: 305371,
-    output_excerpt: "Now I have all the information I need to compile the complete response.",
-  },
-  // task_completed event MUST be present in the fixture to verify it
-  // gets filtered out. If the component stops filtering, this test
-  // catches the regression.
-  {
-    event: "task_completed",
-    timestamp: "2026-06-06T16:13:33.541264+00:00",
-    elapsed_ms: 305402,
-    task_index: 1,
-    output_excerpt: "Now I have all the information I need to compile the complete response.",
-  },
-  {
-    event: "AgentFinish",
-    timestamp: "2026-06-06T16:15:27.550043+00:00",
-    elapsed_ms: 419410,
-    output_excerpt:
-      "Great, I have the travel time data I need. Here's my full logistics assessment.",
-  },
-  {
-    event: "callback_summary",
-    timestamp: "2026-06-06T16:18:58.526116+00:00",
-    elapsed_ms: 630000,
-  },
-];
+const _SUMMARY = FULL_SUMMARY_FIXTURE;
 
 describe("<PlanHistoryPanel />", () => {
   it("renders one row per AgentFinish + callback_summary, filters task_completed", async () => {
@@ -80,7 +50,9 @@ describe("<PlanHistoryPanel />", () => {
     // task_completed at idx=2 must NOT render — that's Option C filter behavior.
     const agentFinishLabels = screen.getAllByText(/AgentFinish/);
     expect(agentFinishLabels).toHaveLength(3);
-    expect(screen.getByText(/callback_summary/)).toBeDefined();
+    // callback_summary renders as "Callback summary" human label per
+    // the summary-row visual treatment (spec §9.15).
+    expect(screen.getByText(/Callback summary/i)).toBeDefined();
     // Negative assertion: task_completed event filtered out.
     expect(screen.queryByText(/task_completed/)).toBeNull();
   });
@@ -102,17 +74,30 @@ describe("<PlanHistoryPanel />", () => {
     // Regression guard: if a JobRun's agent_summary happens to contain
     // ONLY task_completed events (unlikely but possible), the panel
     // should fall through to the empty state, not render an empty <ul>.
-    const onlyTaskCompleted: AgentSummaryRow[] = [
-      {
-        event: "task_completed",
-        timestamp: "2026-06-06T16:13:33.541264+00:00",
-        elapsed_ms: 305402,
-        task_index: 1,
-      },
-    ];
+    const onlyTaskCompleted: AgentSummaryRow[] = [TASK_COMPLETED_FIXTURE];
     const { PlanHistoryPanel } = await import("@/components/plan-history-panel");
     render(<PlanHistoryPanel agentSummary={onlyTaskCompleted} defaultExpanded />);
     expect(screen.getByText(/no agent activity recorded/i)).toBeDefined();
+  });
+
+  it("callback_summary renders as the summary-row variant (count tally, no timing)", async () => {
+    // Slice 4d0 smoke discovery: callback_summary has step_callback_count
+    // + task_callback_count, NOT timestamp + elapsed_ms. The summary-row
+    // visual treatment (spec §9.15) surfaces the qek-a observability
+    // tally with "{N} step events · {M} task events" instead of timing
+    // columns. Discriminated union narrowing in the component forces
+    // each variant to read only the fields its event type actually has.
+    const onlyCallback: AgentSummaryRow[] = [CALLBACK_SUMMARY_FIXTURE];
+    const { PlanHistoryPanel } = await import("@/components/plan-history-panel");
+    render(<PlanHistoryPanel agentSummary={onlyCallback} defaultExpanded />);
+    expect(screen.getByText(/Callback summary/i)).toBeDefined();
+    // The fixture has step_callback_count=7, task_callback_count=3.
+    expect(screen.getByText(/7 step events · 3 task events/)).toBeDefined();
+    // Negative assertion: no "undefinedms" or "Invalid Date" should
+    // appear — the v1 bug rendered timing columns against the
+    // non-existent timestamp/elapsed_ms fields.
+    expect(screen.queryByText(/undefined/i)).toBeNull();
+    expect(screen.queryByText(/Invalid Date/i)).toBeNull();
   });
 
   it("shows the 'How this plan was made' header trigger", async () => {

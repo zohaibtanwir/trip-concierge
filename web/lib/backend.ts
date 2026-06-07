@@ -92,25 +92,48 @@ export interface TripFull {
   days: TripDay[];
 }
 
-export interface AgentSummaryRow {
-  // Slice 4d0 smoke (2026-06-07): updated to match the actual backend
-  // contract from qek-a's step_callback (shipped sometime between
-  // slice 4.3 and slice 4.5b). The pre-qek-a shape
-  // {agent, step, duration_ms, tokens} was self-referential in the
-  // PlanHistoryPanel fixture — tests passed against the fixture while
-  // the backend shipped a different shape. Caught at Sunday morning
-  // smoke, fixed by aligning the type with what JobRun.agent_summary
-  // actually contains.
-  event: "AgentFinish" | "task_completed" | "callback_summary";
+/**
+ * AgentSummaryRow — discriminated union of step_callback event shapes.
+ *
+ * Slice 4d0 Sunday smoke (2026-06-07) refactor: backend's qek-a
+ * step_callback emits three structurally heterogeneous event types
+ * sharing only the `event` discriminator field. Modeling as a union
+ * (rather than an "optional everything" struct) lets TypeScript narrow
+ * on `row.event` and forces the UI to handle each variant's actual
+ * field set. The compile-time exhaustiveness check is what makes the
+ * schema's heterogeneity impossible to ignore (the prior interface
+ * shape let `callback_summary` rows reach _formatDuration(undefined)
+ * → "undefinedms" rendering).
+ *
+ * agent_role enrichment so AgentFinish rows can render "Researcher"
+ * instead of literal "AgentFinish" — tracked as P2 ticket
+ * trip-concierge-nhm. When that lands, add `agent_role?: string` to
+ * the AgentFinish + task_completed variants.
+ */
+export type AgentSummaryRow =
+  | AgentSummaryAgentFinishRow
+  | AgentSummaryTaskCompletedRow
+  | AgentSummaryCallbackSummaryRow;
+
+export interface AgentSummaryAgentFinishRow {
+  event: "AgentFinish";
   timestamp: string;
   elapsed_ms: number;
   output_excerpt?: string;
-  // Only present on task_completed events (the CrewAI hook layout
-  // emits these alongside AgentFinish events).
-  task_index?: number;
-  // agent_role would be ideal here so the UI can show "Researcher"
-  // instead of just "AgentFinish" — tracked as P2 follow-up for the
-  // backend step_callback to capture agent.role at fire-time.
+}
+
+export interface AgentSummaryTaskCompletedRow {
+  event: "task_completed";
+  timestamp: string;
+  elapsed_ms: number;
+  output_excerpt?: string;
+  task_index: number;
+}
+
+export interface AgentSummaryCallbackSummaryRow {
+  event: "callback_summary";
+  step_callback_count: number;
+  task_callback_count: number;
 }
 
 export interface PlanStatus {
