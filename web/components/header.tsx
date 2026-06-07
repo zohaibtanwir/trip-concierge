@@ -34,19 +34,26 @@ export async function Header() {
   const user = session?.user ?? null;
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
+    <header className="fixed top-0 left-0 right-0 z-50 bg-primary-container border-b border-outline-variant">
       <nav className="mx-auto flex h-20 max-w-[1440px] items-center justify-between px-4 md:px-8 lg:px-16">
-        <Link href="/" className="text-label-md text-on-surface hover:text-primary">
+        <Link
+          href="/"
+          className="text-label-md text-on-primary-container hover:text-on-primary-container/80 transition-colors"
+        >
           Trip Concierge
         </Link>
         {user ? (
           <details className="relative">
-            <summary className="cursor-pointer list-none flex items-center gap-2 text-label-sm text-on-surface hover:text-primary">
+            <summary className="cursor-pointer list-none flex items-center gap-2 text-label-sm text-on-primary-container hover:text-on-primary-container/80 transition-colors">
               <span className="material-symbols-outlined text-base" aria-hidden>
                 account_circle
               </span>
               <span className="hidden sm:inline">{user.email ?? user.name ?? "Account"}</span>
             </summary>
+            {/* Dropdown panel uses the surface palette (NOT teal) for
+             * readability — teal-on-teal nested surfaces would muddle.
+             * Slice 4.5c commit 2 keeps the contrast pop where it
+             * matters: teal navbar bar, surface-shaded dropdown. */}
             <div className="absolute right-0 mt-2 w-56 rounded-xl border border-outline-variant bg-surface-container-lowest p-3 shadow-lg">
               <p className="px-2 py-1 text-label-sm text-on-surface-variant break-all">
                 {user.email ?? user.name ?? "Signed in"}
@@ -63,7 +70,10 @@ export async function Header() {
             </div>
           </details>
         ) : (
-          <Link href="/login" className="text-label-md text-on-surface hover:text-primary">
+          <Link
+            href="/login"
+            className="text-label-md text-on-primary-container hover:text-on-primary-container/80 transition-colors"
+          >
             Sign in
           </Link>
         )}

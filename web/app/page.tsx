@@ -1,21 +1,23 @@
-import Link from "next/link";
+/**
+ * `/` — landing page route (slice 4.5c commit 2).
+ *
+ * Page wrapper composes the shell <Header /> + the <LandingPage />
+ * content per Q2c sign-off. Both components are auth-aware internally.
+ * Pages stay thin; composition stays at the page level.
+ *
+ * Replaces the slice 4.1 placeholder (h1 + sign-in link) that served
+ * as a stopgap while feature slices accumulated on /trips/[id]. Slice
+ * 4.5c is the explicit discharge for that shell debt.
+ */
 
-import { auth } from "@/auth";
+import { Header } from "@/components/header";
+import { LandingPage } from "@/components/landing-page";
 
-export default async function Page() {
-  const session = await auth();
+export default function Page() {
   return (
-    <main className="min-h-screen p-8">
-      <h1 className="text-3xl font-bold">Trip Concierge</h1>
-      {session?.user ? (
-        <p className="mt-4">Signed in as {session.user.email ?? session.user.name}.</p>
-      ) : (
-        <p className="mt-4">
-          <Link href="/login" className="underline">
-            Sign in
-          </Link>
-        </p>
-      )}
-    </main>
+    <>
+      <Header />
+      <LandingPage />
+    </>
   );
 }
