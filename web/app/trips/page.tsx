@@ -19,7 +19,15 @@ import { fetchTripList } from "@/lib/backend";
 
 export const dynamic = "force-dynamic";
 
-export default async function TripsPage() {
+interface TripsPageProps {
+  // Slice 4.5c commit 3.5: ?new=true comes from the landing Hero
+  // "Plan a trip" CTA (Critique 1) — when present, the NewTripDialog
+  // mounts with defaultOpen=true. Skipped vitest coverage for this
+  // wiring per Q3.5-impl-c sign-off; verified via browser smoke.
+  searchParams: Promise<{ new?: string }>;
+}
+
+export default async function TripsPage({ searchParams }: TripsPageProps) {
   const session = await auth();
   if (!session?.user?.id) {
     return (
@@ -29,7 +37,10 @@ export default async function TripsPage() {
     );
   }
 
-  const items = await fetchTripList({ userId: session.user.id });
+  const { new: newParam } = await searchParams;
+  const autoOpenNewDialog = newParam === "true";
+  const userId = session.user.id;
+  const items = await fetchTripList({ userId });
 
   return (
     <>
@@ -37,16 +48,28 @@ export default async function TripsPage() {
       <main className="mx-auto max-w-[1440px] px-4 pt-28 md:px-8 lg:px-16">
         <div className="mb-8 flex items-baseline justify-between gap-4">
           <h1 className="text-headline-md text-on-surface md:text-headline-lg">Your trips</h1>
-          {/* Slice 4.5c: top-right "New trip" CTA opens the MCP-first
+          {/* Slice 4.5c: top-right "New trip" CTA opens the two-paths
            * dialog. Only shown when trips exist — empty-state has its
-           * own primary trigger below per Q6=A consolidation. */}
-          {items.length > 0 && <NewTripDialog triggerLabel="New trip" />}
+           * own primary trigger below per Q6=A consolidation.
+           * userId required for the "Create here" form path; ?new=true
+           * auto-opens for Hero CTA landings. */}
+          {items.length > 0 && (
+            <NewTripDialog
+              triggerLabel="New trip"
+              userId={userId}
+              defaultOpen={autoOpenNewDialog}
+            />
+          )}
         </div>
         {items.length === 0 ? (
           <div className="rounded-xl border border-dashed border-outline-variant p-8 text-center bg-surface-container-lowest">
             <p className="text-body-lg text-on-surface font-medium mb-4">No trips yet.</p>
             <div className="flex justify-center mb-4">
-              <NewTripDialog triggerLabel="Plan your first trip" />
+              <NewTripDialog
+                triggerLabel="Plan your first trip"
+                userId={userId}
+                defaultOpen={autoOpenNewDialog}
+              />
             </div>
             <p className="text-body-md text-on-surface-variant">
               Or{" "}

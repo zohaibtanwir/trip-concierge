@@ -87,7 +87,7 @@ describe("/trips list page", () => {
     (backend.fetchTripList as ReturnType<typeof vi.fn>).mockResolvedValue(_MIXED_STATE_FIXTURE);
 
     const Page = (await import("@/app/trips/page")).default;
-    render(await Page());
+    render(await Page({ searchParams: Promise.resolve({}) }));
 
     // Each destination appears.
     expect(screen.getByText(/Coorg, India/)).toBeDefined();
@@ -108,7 +108,7 @@ describe("/trips list page", () => {
     (backend.fetchTripList as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     const Page = (await import("@/app/trips/page")).default;
-    render(await Page());
+    render(await Page({ searchParams: Promise.resolve({}) }));
 
     // Some clear "you have no trips yet" surface. We're loose on the
     // exact copy (the empty state may use "No trips yet", "Plan your
@@ -126,7 +126,7 @@ describe("/trips list page", () => {
     );
 
     const Page = (await import("@/app/trips/page")).default;
-    render(await Page());
+    render(await Page({ searchParams: Promise.resolve({}) }));
 
     const link = screen.getByRole("link", { name: /Coorg/i });
     expect(link.getAttribute("href")).toBe("/trips/trip-succ");

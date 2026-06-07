@@ -210,3 +210,146 @@ describe("updateTripSettingsAction", () => {
     ).rejects.toThrow(/403/);
   });
 });
+
+describe("createTripAction", () => {
+  // Slice 4.5c commit 3.5 — web-side trip creation via the same
+  // backend endpoint the MCP tool uses (POST /trips + POST
+  // /trips/{id}/plan). Object-args per u8v precedent. Three-call
+  // wire shape: mint → POST /trips → POST /trips/{id}/plan.
+
+  it("mints token + POSTs /trips with payload + POSTs /trips/{id}/plan; returns {trip_id}", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({ mcp_token: "jwt-create", expires_at: "2026-09-03T00:00:00Z" }),
+    );
+    // POST /trips → returns the trip row (TripRead shape)
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse(
+        {
+          id: "new-trip-uuid-1234",
+          user_id: "user-abc",
+          status: "draft",
+          destination: "Goa, India",
+          start_date: "2026-07-15",
+          end_date: "2026-07-17",
+          group_size: 2,
+          budget_total: "40000.00",
+          currency: "INR",
+          constraints: {},
+          pace: "balanced",
+          created_at: "2026-06-07T00:00:00Z",
+          updated_at: "2026-06-07T00:00:00Z",
+        },
+        201,
+      ),
+    );
+    // POST /trips/{id}/plan → 202 with job info
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse(
+        {
+          state: "queued",
+          approved: null,
+          job_id: "plan-job-xyz",
+          kind: "plan",
+          agent_summary: null,
+        },
+        202,
+      ),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { createTripAction } = await import("@/lib/actions");
+    const result = await createTripAction({
+      userId: "user-abc",
+      destination: "Goa, India",
+      startDate: "2026-07-15",
+      endDate: "2026-07-17",
+      groupSize: 2,
+      budgetTotal: 40000,
+      currency: "INR",
+      pace: "balanced",
+    });
+
+    expect(result.trip_id).toBe("new-trip-uuid-1234");
+
+    // Three calls: mint, POST /trips, POST /trips/{id}/plan
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    // Call 2: POST /trips with full payload
+    const [createUrl, createInit] = fetchMock.mock.calls[1];
+    expect(createUrl).toBe("http://test-backend/trips");
+    expect(createInit?.method).toBe("POST");
+    expect((createInit?.headers as Record<string, string>)["x-tc-token"]).toBe("jwt-create");
+    expect(JSON.parse(createInit?.body as string)).toEqual({
+      destination: "Goa, India",
+      start_date: "2026-07-15",
+      end_date: "2026-07-17",
+      group_size: 2,
+      budget_total: 40000,
+      currency: "INR",
+      pace: "balanced",
+    });
+
+    // Call 3: POST /trips/{new-trip-uuid-1234}/plan with same token
+    const [planUrl, planInit] = fetchMock.mock.calls[2];
+    expect(planUrl).toBe("http://test-backend/trips/new-trip-uuid-1234/plan");
+    expect(planInit?.method).toBe("POST");
+    expect((planInit?.headers as Record<string, string>)["x-tc-token"]).toBe("jwt-create");
+  });
+
+  it("omits undefined optional fields from the POST /trips body", async () => {
+    // destination is the only required field. start_date / end_date /
+    // budget_total are optional — when not provided, they should NOT
+    // appear in the body (backend's Pydantic accepts missing optionals
+    // but null vs missing has semantic difference for date fields).
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({ id: "t-2", user_id: "user-abc", status: "draft" }, 201),
+    );
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ job_id: "j" }, 202));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { createTripAction } = await import("@/lib/actions");
+    await createTripAction({
+      userId: "user-abc",
+      destination: "Hampi",
+      groupSize: 1,
+      currency: "INR",
+      pace: "lazy",
+    });
+
+    const [, createInit] = fetchMock.mock.calls[1];
+    const body = JSON.parse(createInit?.body as string);
+    expect(body).toEqual({
+      destination: "Hampi",
+      group_size: 1,
+      currency: "INR",
+      pace: "lazy",
+    });
+    expect(body).not.toHaveProperty("start_date");
+    expect(body).not.toHaveProperty("end_date");
+    expect(body).not.toHaveProperty("budget_total");
+  });
+
+  it("throws BackendError if POST /trips fails (no /plan call made)", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(new Response("bad destination", { status: 422 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { createTripAction } = await import("@/lib/actions");
+    await expect(
+      createTripAction({
+        userId: "user-abc",
+        destination: "",
+        groupSize: 1,
+        currency: "USD",
+        pace: "balanced",
+      }),
+    ).rejects.toThrow(/422/);
+
+    // Only 2 calls: mint + POST /trips (failed). NO /plan call.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

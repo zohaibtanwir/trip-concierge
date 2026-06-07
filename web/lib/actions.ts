@@ -159,3 +159,90 @@ export async function updateTripSettingsAction({
   }
   return (await response.json()) as UpdateTripSettingsResult;
 }
+
+/**
+ * createTripAction — invoked by <NewTripDialog />'s "Create here" tab
+ * (slice 4.5c commit 3.5). Discharges the Sunday-smoke product gap:
+ * users without Claude Desktop can now plan a trip directly from the
+ * web app. Same backend endpoint the MCP `create_trip` tool calls.
+ *
+ * Two-call wire shape:
+ *   1. POST /trips with TripCreate payload → returns the new trip row
+ *   2. POST /trips/{trip_id}/plan to enqueue the crew planning arq job
+ *
+ * Returns just `{ trip_id }`; the dialog handles `useRouter().push()`
+ * to `/trips/[trip_id]` per Q3.5-impl-a sign-off (keep action pure
+ * data-shape, dialog owns UX flow).
+ *
+ * Omit-undefined for optional fields per the established pattern —
+ * Pydantic accepts missing date fields differently than null, so we
+ * never send a property unless the user provided a value. Vibe is
+ * intentionally absent — vibe is a refine-time concern per the
+ * TripCreate schema and the architectural decision in Q-product-2.
+ */
+export interface CreateTripResult {
+  trip_id: string;
+}
+
+export async function createTripAction({
+  userId,
+  destination,
+  startDate,
+  endDate,
+  groupSize,
+  budgetTotal,
+  currency,
+  pace,
+}: {
+  userId: string;
+  destination: string;
+  startDate?: string;
+  endDate?: string;
+  groupSize: number;
+  budgetTotal?: number;
+  currency: string;
+  pace: TripPace;
+}): Promise<CreateTripResult> {
+  const { mcp_token } = await mintMcpToken({ userId });
+
+  // Build POST /trips body — omit undefined optional fields.
+  const createBody: Record<string, unknown> = {
+    destination,
+    group_size: groupSize,
+    currency,
+    pace,
+  };
+  if (startDate !== undefined) createBody.start_date = startDate;
+  if (endDate !== undefined) createBody.end_date = endDate;
+  if (budgetTotal !== undefined) createBody.budget_total = budgetTotal;
+
+  const createRes = await fetch(`${env.BACKEND_URL}/trips`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-tc-token": mcp_token },
+    body: JSON.stringify(createBody),
+  });
+  if (!createRes.ok) {
+    throw new BackendError(
+      createRes.status,
+      `createTripAction (POST /trips) HTTP ${createRes.status}: ${await createRes.text()}`,
+    );
+  }
+  const trip = (await createRes.json()) as { id: string };
+
+  // POST /trips/{trip_id}/plan — enqueue the crew. Body is the
+  // TripRunRequest shape; the backend's _build_request() snapshots
+  // from the Trip row, so we send an empty body and the backend
+  // composes the full request server-side.
+  const planRes = await fetch(`${env.BACKEND_URL}/trips/${trip.id}/plan`, {
+    method: "POST",
+    headers: { "x-tc-token": mcp_token },
+  });
+  if (!planRes.ok) {
+    throw new BackendError(
+      planRes.status,
+      `createTripAction (POST /trips/{id}/plan) HTTP ${planRes.status}: ${await planRes.text()}`,
+    );
+  }
+
+  return { trip_id: trip.id };
+}

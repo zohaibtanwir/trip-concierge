@@ -42,18 +42,33 @@ function _Hero({ authed }: { authed: boolean }) {
           Local Expert, Logistics Planner, and Budget Auditor — collaborate to build an itinerary
           that holds up in practice, not just on paper.
         </p>
-        <div className="mt-8">
+        <div className="mt-8 flex flex-wrap items-center gap-3">
+          {/* Primary CTA — "Plan a trip" routes through auth as needed
+           * and lands on /trips with the dialog auto-opened. Critique 1
+           * sign-off: action-oriented entry point matters more than
+           * passive "Sign in" / "View your trips" copy for first-time
+           * visitors who want to do something, not just browse. */}
+          <Link
+            href={
+              authed
+                ? "/trips?new=true"
+                : `/login?callbackUrl=${encodeURIComponent("/trips?new=true")}`
+            }
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-label-md text-on-primary hover:bg-primary/90 transition-colors"
+          >
+            Plan a trip
+          </Link>
           {authed ? (
             <Link
               href="/trips"
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-label-md text-on-primary hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-lowest px-6 py-3 text-label-md text-on-surface hover:bg-surface-container-low transition-colors"
             >
               View your trips →
             </Link>
           ) : (
             <Link
               href="/login"
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-label-md text-on-primary hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-lowest px-6 py-3 text-label-md text-on-surface hover:bg-surface-container-low transition-colors"
             >
               Sign in
             </Link>

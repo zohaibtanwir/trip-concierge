@@ -116,3 +116,44 @@ describe("<LandingPage />", () => {
     expect(screen.getAllByText(/Budget Auditor/i).length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("<LandingPage /> Hero 'Plan a trip' CTA (slice 4.5c commit 3.5)", () => {
+  // Critique 1 + sign-off 3: Hero gains a "Plan a trip" CTA that
+  // routes differently per auth state.
+  //   unauthed → /login?callbackUrl=/trips?new=true
+  //   authed   → /trips?new=true (the /trips page auto-opens the
+  //              dialog when ?new=true is present)
+  // The existing "Sign in" / "View your trips →" CTAs remain — "Plan
+  // a trip" is the action-oriented entry point.
+
+  it("renders 'Plan a trip' CTA routing to /login?callbackUrl=... when unauthed", async () => {
+    const { auth } = await import("@/auth");
+    (auth as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const { LandingPage } = await import("@/components/landing-page");
+    render(await LandingPage());
+
+    const planCta = screen.getByRole("link", { name: /Plan a trip/i });
+    expect(planCta).toBeDefined();
+    // Routes through /login with callbackUrl back to /trips?new=true
+    // so post-auth, user lands on /trips with the dialog auto-opened.
+    const href = planCta.getAttribute("href") ?? "";
+    expect(href).toContain("/login");
+    expect(href).toContain("callbackUrl");
+    expect(decodeURIComponent(href)).toContain("/trips?new=true");
+  });
+
+  it("renders 'Plan a trip' CTA routing to /trips?new=true when authed", async () => {
+    const { auth } = await import("@/auth");
+    (auth as ReturnType<typeof vi.fn>).mockResolvedValue({
+      user: { id: "user-abc", email: "u@test.com" },
+    });
+
+    const { LandingPage } = await import("@/components/landing-page");
+    render(await LandingPage());
+
+    const planCta = screen.getByRole("link", { name: /Plan a trip/i });
+    expect(planCta).toBeDefined();
+    expect(planCta.getAttribute("href")).toBe("/trips?new=true");
+  });
+});
