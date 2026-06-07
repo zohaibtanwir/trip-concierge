@@ -54,8 +54,11 @@ describe("<NewTripDialog />", () => {
     expect(screen.getByText(/4 specialized agents|10[\s-]?min/i)).toBeDefined();
     // Prompt template prose-style placeholder.
     expect(screen.getByText(/\[DESTINATION\]/)).toBeDefined();
-    // Caveat per Q3 addition.
-    expect(screen.getByText(/web-only via Claude Desktop/i)).toBeDefined();
+    // Caveat — slice 4.5c commit 4 updated copy to "conversational
+    // planning…power users with the desktop app installed." Loose
+    // regex match on "conversational" so future copy polish doesn't
+    // require a test change.
+    expect(screen.getByText(/conversational planning|prefer.*Claude Desktop/i)).toBeDefined();
     // Don't-have-Claude-Desktop link → claude.ai/download
     const dlLink = screen.getByRole("link", {
       name: /Don't have Claude Desktop|Claude Desktop\?/i,

@@ -362,6 +362,52 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
   - `trip-concierge-cdr`: Slice 4.5b (closed at merge).
 - **Merge:** _<placeholder — post-merge footer convention>_
 
+### Slice 4.5c: Application shell + web trip creation (discharge of two Sunday-smoke product gaps)
+
+- [x] **Done when:** Two product gaps surfaced at Sunday-morning manual UI smoke (2026-06-07) are discharged in v1.0a — (1) application shell debt accumulated invisibly across 8 Phase 4 feature-axis slices (no header, no landing page, no new-trip CTA, no empty state, no profile/logout), and (2) Claude Desktop dependency was forced as the sole trip-creation path. Slice 4.5c ships: shared auth-aware `<Header />` (teal `bg-primary-container`, wordmark + profile menu with email + Sign out), full landing page at `/` (Hero with "Plan a trip" branched CTA + How it works + Why agents + Footer), two-paths `<NewTripDialog />` (Create here form via `createTripAction` two-call POST /trips → POST /trips/{id}/plan + Create in Claude Desktop tab), theme sentinels migrated from `/login` to root layout, `← All trips` back link relocated from trip detail's inline header to page body.
+
+- ✅ **Two product gaps discharged in the same session arc** — reactive discharge per the slice-arc-blind-spots observation. Sunday smoke caught both; both shipped within hours rather than deferring to v1.0b. The methodological learning is documented in spec §17.13 (Application shell ownership pattern — non-feature-axis budget).
+
+- **What this slice delivers:**
+  - **Marsh demo answer-readiness (high):** Tim Bennett asking "what if I don't have Claude Desktop?" now has an honest answer (web form, friction-free path). Tim asking "where's the landing page?" sees a credible product surface, not a placeholder h1.
+  - **User-visible value (substantial):** every authed route has a consistent teal sticky-glass header with profile menu + Sign out. Landing page exists. Trip creation is first-class web functionality, not MCP-gated.
+  - **Engineering value (moderate):** shared `<Header />` extracts DRY violation across `/trips` + `/trips/[id]` inline headers. Theme sentinels move to root layout (single source of truth). Spec §9.16 + §17.13 codify the application-shell-vs-feature distinction for future readers.
+
+- **Tracked as:** `trip-concierge-8yb` (P1).
+
+- **5-commit decomposition (slice 4.5c proper):**
+  1. `c984c48` — Shared `<Header />` extraction + theme sentinels migrated to root layout + `← All trips` moved to page body. 5 vitest tests for Header. trip-detail + trip-list tests updated with `vi.mock("@/components/header")` for nested-async-RSC.
+  2. `53b76f9` — Landing page (Hero / How it works / Why agents / Footer) + teal navbar restyle (`bg-primary-container` + `text-on-primary-container`). 5 vitest tests for LandingPage.
+  3. `385af1b` — `<NewTripDialog />` MCP-only (native `<dialog>` + showModal, prompt template, copy-to-clipboard, claude.ai/download). Top-right CTA + empty-state button (Q6=A consolidation). 5 vitest tests.
+  4. `4c52f7c` — Two-paths reframe (commit 3.5). `createTripAction` Server Action (two-call: POST /trips → POST /trips/{id}/plan), `<NewTripForm />` (destination required + 6 optional fields, no vibe per architecture), dialog restructured as tabs (Create here default | Create in Claude Desktop), Hero "Plan a trip" CTA, `/trips?new=true` auto-open. 14 net new tests.
+  5. `<commit-4-sha>` — Docs (spec §9.16 + §17.13 + v1.0.5 changelog) + stale-caveat copy swap on MCP tab + this BUILD_PLAN entry.
+
+- **Bonus repair commits on main during the session arc** (not in slice 4.5c proper, but transparently listed here because they were surfaced by smoke during this slice work):
+  - `7577e7c` — `web/scripts/mint-session-cookie.ts` dev utility (slice 4d0 close-out smoke surfaced unconfigured auth providers; this script lets dev/smoke proceed by minting Auth.js JWE cookies for any user).
+  - `8baefb3` — PlanHistoryPanel `agent_summary` schema mismatch fix (slice 4.3 fixture used pre-qek-a shape; backend ships qek-a shape; 11 rows of `undefinedms` in production despite 506 passing tests) + ConstraintPanel currency threading (USD-on-INR bug on the Coorg trip).
+  - `d93b03b` — `AgentSummaryRow` refactored to TypeScript discriminated union + shared fixtures module + design-spec.md §9.15 summary-row pattern (callback_summary heterogeneity from AgentFinish; third stale fixture caught during audit at N=3).
+  - `55057f6` — `_formatTime` made date-context-aware ("Yesterday · HH:MM:SS" / "Sat · HH:MM:SS" / "Jun 6 · HH:MM:SS") + 4 new vitest cases via `vi.setSystemTime`.
+  - `1ecdfea` (pre-arc) — Langfuse SDK v4 `environment` kwarg fix for trace partitioning.
+  - `80dabb6` (pre-arc) — `.claude/rules/slice-completion-discipline.md` step 5b-1 formalization (archive any long-lived service log before kill in Step 5b).
+  - `2e4ef72` (pre-arc) — repoint dupe ticket IDs (5gf→gdm, wce→xcs).
+
+- **Files created (slice 4.5c proper):**
+  - web: `components/header.tsx`, `components/landing-page.tsx`, `components/new-trip-dialog.tsx`, `components/new-trip-form.tsx`, `tests/header.test.tsx`, `tests/landing-page.test.tsx`, `tests/new-trip-dialog.test.tsx`.
+- **Files modified (slice 4.5c proper):**
+  - web: `app/layout.tsx` (theme sentinels migrated in), `app/login/page.tsx` (sentinels removed), `app/page.tsx` (placeholder → Header + LandingPage composition), `app/trips/page.tsx` (Header + NewTripDialog integration + ?new=true searchParam wiring), `app/trips/[id]/page.tsx` (Header integration + `← All trips` moved to page body), `lib/actions.ts` (`createTripAction` added), `tests/actions.test.ts` (3 new), `tests/smoke.test.tsx` (updated for nested-async-RSC pattern), `tests/trip-detail.test.tsx` (Header mock added), `tests/trip-list.test.tsx` (Header mock + searchParams pass-through), `tests/e2e/slice-4.3-smoke.spec.ts` (comment update to reflect layout-level sentinel home).
+  - docs: `design-spec.md` (§9.16 NEW + §17.13 NEW + v1.0.5 changelog).
+
+- **Tests:** 29 net new across slice 4.5c proper (5 Header + 7 LandingPage + 14 NewTripDialog two-paths + 3 createTripAction). Plus 4 from the date-formatter bonus commit. Cumulative across the session arc (slice 4d0 close + 4.5c): **153 web vitest** (a +21 over slice 4d0's 132 baseline) on the web side; backend/agents/mcp_server unchanged at 213 + 99 + 52 (+1 skipped).
+
+- **Followup tickets filed during slice 4.5c:**
+  - `trip-concierge-mb6` (P3): Investigate Auth.js cookie parsing crash on `/` under fresh headless Chromium. Slice 4.3 author noted at e2e probe site; commit 1 kept the `/login` workaround. Real fix would let probes route to `/`.
+  - `trip-concierge-nhm` (P2, slice 4d0 carryover): Enrich `agent_summary` events with `agent_role` field — UI currently shows event type ("AgentFinish") instead of agent identity ("Researcher"). Tracked for next step_callback-touching slice or v1.0b polish.
+  - `trip-concierge-awf` (P2, Sunday morning): Wire real auth providers (AUTH_GOOGLE_ID + Resend) for dev environment OR document `web/scripts/mint-session-cookie.ts` as the official local-dev auth path.
+
+- **Tickets closed in this slice:**
+  - `trip-concierge-8yb`: Slice 4.5c application shell (closed at merge).
+- **Merge:** _<placeholder — post-merge footer convention>_
+
 ### Slice 4.6: Edit and regenerate (block-level + day-level)
 
 - [ ] **Done when:** Single-block regen works. Day regen works. Undo last change works. Locked blocks are preserved across regens.

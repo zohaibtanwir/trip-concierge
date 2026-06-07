@@ -197,8 +197,9 @@ export function NewTripDialog({ triggerLabel, userId, defaultOpen = false }: New
                   </button>
                 </div>
                 <p className="text-label-sm text-on-surface-variant italic mb-4">
-                  Trip Concierge is currently web-only via Claude Desktop. A standalone mobile/web
-                  creation flow is on the v1.0b roadmap.
+                  For users who prefer conversational planning. The web form on the "Create here"
+                  tab is the friction-free path; this Claude Desktop flow is for power users with
+                  the desktop app installed.
                 </p>
                 <a
                   href="https://claude.ai/download"

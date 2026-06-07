@@ -782,6 +782,148 @@ with the discriminated union in `web/lib/backend.ts`.
 
 ---
 
+### 9.16 Application shell
+
+Added in v1.0.5 (slice 4.5c, 2026-06-07). Documents the
+non-`/trips/[id]`-bound surfaces that frame the whole product:
+sticky-glass Header, landing page at `/`, and the two-paths
+NewTripDialog. These exist as an umbrella sub-section (rather than
+three peer §9.x entries) because they share a common identity —
+they're the *application shell*, distinct from the feature panels
+documented in §9.1-9.15.
+
+The shell-vs-feature distinction is more than visual: shell surfaces
+are *always present* (Header on every authed route) or *entry points*
+(landing as the unauthenticated front door, NewTripDialog as the
+creation entry). Feature panels are *contextual* (ConstraintPanel
+only on succeeded/failed trip detail, PlanHistoryPanel only when
+agent_summary exists). The contract between them: shell never
+references trip data; feature panels never reference auth state
+directly. This separation lets each evolve independently.
+
+The methodological learning that produced this slice — why shell
+debt accumulates invisibly across feature-axis slice arcs — is
+documented in §17.13 as v1.1 prep notes for explicit non-feature-axis
+ownership budgets.
+
+#### 9.16.1 Sticky-glass header
+
+Auth-aware React Server Component. Reads `auth()` internally; pages
+mount `<Header />` with zero props.
+
+**Visual:**
+- `fixed top-0 left-0 right-0 z-50` — sticks above page content,
+  always visible
+- `bg-primary-container` — teal background (same teal as numbered
+  circles, Ready badge, day chips per §3)
+- `text-on-primary-container` — white text + opacity-based hover
+  transitions (`hover:text-on-primary-container/80`)
+- `border-b border-outline-variant` — separates from page content
+- `h-20 max-w-[1440px]` container, padding `px-4 md:px-8 lg:px-16`
+  matches §5 spacing tokens
+
+**Layout:**
+- Wordmark "Trip Concierge" on the left — `<Link href="/">` always
+  routes home regardless of auth state ("logo always returns home"
+  convention)
+- Right side branches on session:
+  - **Unauthed:** "Sign in" link → `/login`
+  - **Authed:** `<details>` profile menu with `account_circle` icon +
+    email (hidden on mobile via `hidden sm:inline`). Click opens
+    surface-shaded dropdown with email (read-only) + Sign out
+    `<button>` wrapped in `<form action={_signOutAction}>` (Server
+    Action, no client JS)
+
+**Code reference:** `web/components/header.tsx`. Profile menu uses
+native `<details>` for zero-library dropdown (consistent with
+PlanHistoryPanel pattern §9.15). Sign-out is co-located as a
+`"use server"` function — header is the unique consumer of
+`signOut()`, doesn't earn its keep in `lib/actions.ts` until a
+second consumer appears.
+
+#### 9.16.2 Landing page surfaces
+
+Async React Server Component at `web/components/landing-page.tsx`.
+Composed at the page level: `app/page.tsx` returns `<><Header />
+<LandingPage /></>`. Four sections:
+
+1. **Hero** — h1 tagline + branched primary CTA + branded gradient
+   backdrop (`bg-gradient-to-br from-primary/15 via-primary-container/30
+   to-primary-container/10` subtle).
+2. **How it works** — 3 cards: "Create via Claude Desktop", "Refine
+   in the web app", "Plan persists across both". Grid collapses to
+   1 column on mobile.
+3. **Why agents, not just AI** — names all 4 specialist agents
+   (Researcher, Local Expert, Logistics Planner, Budget Auditor)
+   with one-line role descriptions. The Marsh-demo-valuable framing.
+4. **Footer** — wordmark + `© 2026` + tech credit ("Built with
+   CrewAI + Claude Sonnet 4"). Inline JSX, no extracted `<Footer />`
+   until a reuse case appears.
+
+**Hero CTA branching (slice 4.5c commit 3.5):**
+- **Primary CTA "Plan a trip"** — action-oriented entry point:
+  - Unauthed → `/login?callbackUrl=` + encoded `/trips?new=true`
+  - Authed → `/trips?new=true` (the searchParam auto-opens the
+    NewTripDialog on landing)
+- **Secondary CTA** — auth-aware:
+  - Unauthed → "Sign in" → `/login`
+  - Authed → "View your trips →" → `/trips`
+
+The branched-CTA pattern (primary action + auth-aware secondary)
+makes the landing page work for both first-time visitors (action)
+and returning users (navigation) without separate routes.
+
+**Code reference:** `web/components/landing-page.tsx`.
+
+#### 9.16.3 Two-paths trip creation dialog
+
+Client Component dialog with native `<dialog>` element + `showModal()`
+for focus trap, escape-to-close, and backdrop behavior at the
+platform layer. Used at three trigger surfaces:
+
+- `/trips` top-right "New trip" CTA (when trips exist)
+- `/trips` empty-state "Plan your first trip" button
+- Landing Hero "Plan a trip" CTA via `/trips?new=true` searchParam
+  (dialog auto-opens via `defaultOpen` prop)
+
+**Two-paths structure (Q3.5 sign-off):**
+
+Bare `<button role="tab">` tabs (no library dependency, consistent
+with §9.15 PlanHistoryPanel `<details>` pattern). Default tab is
+"Create here" (friction-free path).
+
+- **"Create here"** — inline `<NewTripForm />`: destination
+  (required) + start_date / end_date / group_size / budget_total /
+  currency / pace. NO vibe field (vibe is a refine-time concern per
+  the architectural call). Submit → `createTripAction` → two backend
+  calls (POST /trips → POST /trips/{id}/plan) → `useRouter.push`
+  redirects to `/trips/[trip_id]`.
+- **"Create in Claude Desktop"** — MCP-first content: explanation
+  paragraph, copy-to-clipboard prompt template with prose-style
+  placeholders (`[DESTINATION]` not `<destination>`), claude.ai
+  /download link in new tab.
+
+**Graceful degradation:** when `userId` prop is absent (legacy or
+future MCP-only callers), the tabs disappear and only the MCP path
+renders. Tests cover both modes.
+
+**Clipboard policy:** `navigator.clipboard.writeText` only (modern
+browsers); no `execCommand` fallback. Button is a no-op on browsers
+without the API; user can manually select the visible template.
+
+**Code reference:** `web/components/new-trip-dialog.tsx` +
+`web/components/new-trip-form.tsx`. Form submit handler uses
+`useRouter().push()` rather than a server-side `redirect()` so the
+dialog owns UX flow (Q3.5-impl-a). Server Action stays pure
+data-shape, returning just `{ trip_id }`.
+
+**Discharges the second Sunday-smoke product gap:** v1.0a no longer
+requires Claude Desktop installation to create trips. Web form is
+first-class; Claude Desktop path is opt-in for power users who
+prefer conversational planning.
+
+---
+
 ## 10. Dark mode
 
 **Deferred to Phase 5.** v1.0a ships light mode only.
@@ -1155,8 +1297,72 @@ preserved here documents the timeline; the design substrate (§9.13 +
 
 ---
 
+### 17.13 Application shell ownership pattern (non-feature-axis budget)
+
+Added v1.0.5 (slice 4.5c, 2026-06-07). Documents the methodological
+learning that produced slice 4.5c, distinct from the components
+themselves (which live at §9.16).
+
+**The pattern observed:** Phase 4 shipped 8 feature slices (4.1, 4.1b,
+4.2, 4.3, 4.4, 4.5, 4.5b, 4d0), each on `/trips/[id]` or its
+dependencies. Zero slices on application shell — header, landing
+page, new-trip CTA, empty states, profile/logout. Zero backlog
+tickets covering shell gaps (verified via `bd ready` audit during
+Sunday-morning smoke).
+
+Three independent methodology checkpoints — slice claim, ticket
+discipline, design spec — all failed to surface the gap because all
+three were oriented around the feature axis the slice arc traced.
+The shell axis was invisible at every checkpoint until manual smoke
+exposed it.
+
+**The pattern generalized:** slice arcs accumulate blind spots in
+axes orthogonal to the slice axis. Each slice succeeds against its
+own scope; cumulative coverage across orthogonal axes isn't measured
+because nobody's measuring the cumulative dimension. Trip Concierge
+caught four examples in the slice 4.5b → 4d0 → 4.5c arc:
+
+- **Auth-fixture bypass** (Sunday smoke): test fixture proved
+  "given valid session, routes work" but never proved "user can get
+  valid session"
+- **Component-fixture self-reference** (slice 4d0): visual component
+  test fixtures encoded developer's mental model, not backend
+  contract
+- **Heterogeneous event variants** (slice 4d0): fixtures covered
+  dominant variant only, not minority discriminator values
+- **Application shell** (slice 4.5c): feature-arc slices never
+  claimed shell scope; shell debt accumulated invisibly until manual
+  browsing surfaced 5 gaps in <10 minutes
+
+**The structural mitigation: explicit non-feature-axis ownership
+budget per phase.** Every Phase X reserves ≥ 1 slice for axes
+orthogonal to the feature arc (shell completeness, observability
+polish, test infrastructure hardening, dependency hygiene, etc.).
+The slice exists pre-allocated so axes that don't naturally surface
+in feature claims get planned coverage.
+
+**Reactive discharge slices work but only when someone notices.**
+Slice 4.5c is itself a reactive discharge slice — the gap was
+caught by Sunday-morning manual smoke, not by methodology. A
+pre-allocated axis budget converts the discipline from reactive
+("we caught it in time") to structural ("we planned for it").
+
+v1.1 prep: add an "explicit non-feature-axis allocation" gate to
+`BUILD_PLAN.md` phase planning, e.g., "Phase 5 reserves N slices
+for shell + observability + test infrastructure." Suggested check
+at phase open: does the phase have at least one non-feature-axis
+slice budgeted? If no, file one before claiming any feature slice.
+
+**Marsh deck reference:** this is the load-bearing methodology
+observation paired with §17.12's PRD §F4 discharge timeline — both
+document "engineering judgment at small scale compounds" at
+different layers (feature-axis discharge vs orthogonal-axis budget).
+
+---
+
 ## Changelog
 
+- **v1.0.5** (2026-06-07) — Added §9.16 (Application shell — Header, Landing, NewTripDialog) and §17.13 (Application shell ownership pattern meta) from slice 4.5c. Documents the non-`/trips/[id]`-bound surfaces that frame the product (sticky-glass Header, landing page, two-paths NewTripDialog) plus the methodological learning about non-feature-axis ownership budgets. Additive only — no breaking changes.
 - **v1.0.4** (2026-06-07) — Added §9.15 (Activity panel summary-row pattern) from slice 4d0 Sunday smoke fix. Documents the discriminated-union + branched-render pattern for heterogeneous event panels (PlanHistoryPanel's `callback_summary` vs `AgentFinish` rows). Additive only — no breaking changes.
 - **v1.0.3** (2026-06-06) — Added §9.14 (PlanControlsPanel, settings-shaped right-rail panel) from slice 4.5b. Extended §9.13 ConstraintPanel form sections from 4 → 6 (adds Walking limit + Per-day budget rules-shaped rows). Rewrote §17.12 as historical "partial-compliance discharged" note — PRD §F4's 8-control surface now ships complete across slices 4.5 + 4.5b. Additive only — no breaking changes.
 - **v1.0.2** (2026-06-06) — Added §9.13 (Constraint panel + read-only chip list) and §17.12 (PRD §F4 partial-coverage rationale) from slice 4.5. Additive only — no breaking changes to existing tokens or patterns.
