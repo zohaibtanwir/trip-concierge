@@ -12,6 +12,7 @@
 import Link from "next/link";
 
 import { auth } from "@/auth";
+import { Header } from "@/components/header";
 import { TripListRow } from "@/components/trip-list-row";
 import { fetchTripList } from "@/lib/backend";
 
@@ -31,13 +32,7 @@ export default async function TripsPage() {
 
   return (
     <>
-      <header className="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
-        <nav className="mx-auto flex h-20 max-w-[1440px] items-center justify-between px-4 md:px-8 lg:px-16">
-          <Link href="/" className="text-label-md text-on-surface hover:text-primary">
-            Trip Concierge
-          </Link>
-        </nav>
-      </header>
+      <Header />
       <main className="mx-auto max-w-[1440px] px-4 pt-28 md:px-8 lg:px-16">
         <div className="mb-8 flex items-baseline justify-between">
           <h1 className="text-headline-md text-on-surface md:text-headline-lg">Your trips</h1>

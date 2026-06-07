@@ -30,6 +30,13 @@ vi.mock("@/lib/backend", () => ({
   fetchTripList: vi.fn(),
   mintMcpToken: vi.fn(),
 }));
+// Slice 4.5c: Header is an async React Server Component that the page
+// renders inline. vitest's render() can't await nested RSCs, so we mock
+// to a no-op. Header's surface is covered by its own unit tests in
+// tests/header.test.tsx.
+vi.mock("@/components/header", () => ({
+  Header: () => null,
+}));
 
 afterEach(() => {
   cleanup();

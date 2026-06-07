@@ -25,7 +25,37 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {/*
+         * E2E theme sentinels — verify Tailwind v4 tokens compile to
+         * expected RGB values + Material Symbols font renders glyphs
+         * (not missing-glyph squares) in production builds. Read by
+         * web/tests/e2e/slice-4.3-smoke.spec.ts via getComputedStyle and
+         * bounding-rect inspection. Visually off-screen at -9999px so
+         * production users never see them. Do not remove.
+         *
+         * Migrated to root layout in slice 4.5c commit 1 — previously
+         * lived in /login per slice 4.3. The migration discharges the
+         * "configuration correct at writing becomes foot-gun on first
+         * reuse" pattern this session has caught twice (playwright
+         * regex hardcoded to slice-4.4, step-5b-1 rule named
+         * worker.log) and means the sentinels work from any entry
+         * route, not just /login.
+         */}
+        <span
+          data-testid="theme-sentinel"
+          className="absolute -left-[9999px] bg-primary text-on-primary"
+          aria-hidden="true"
+        />
+        <span
+          data-testid="material-symbols-sentinel"
+          className="absolute -left-[9999px] material-symbols-outlined"
+          aria-hidden="true"
+        >
+          map
+        </span>
+        {children}
+      </body>
     </html>
   );
 }

@@ -28,26 +28,9 @@ async function signInWithGoogle() {
 export default function LoginPage() {
   return (
     <main className="min-h-screen flex items-center justify-center p-8">
-      {/*
-       * E2E theme sentinels — verify Tailwind v4 tokens compile to
-       * expected RGB values + Material Symbols font renders glyphs (not
-       * missing-glyph squares) in production builds. Read by
-       * web/tests/e2e/slice-4.3-smoke.spec.ts via getComputedStyle and
-       * bounding-rect inspection. Visually off-screen at -9999px so
-       * production users never see them. Do not remove.
-       */}
-      <span
-        data-testid="theme-sentinel"
-        className="absolute -left-[9999px] bg-primary text-on-primary"
-        aria-hidden="true"
-      />
-      <span
-        data-testid="material-symbols-sentinel"
-        className="absolute -left-[9999px] material-symbols-outlined"
-        aria-hidden="true"
-      >
-        map
-      </span>
+      {/* Theme sentinels moved to root layout in slice 4.5c — they
+       * now apply to every route, not just /login. Probe path in
+       * slice-4.3-smoke.spec.ts updated to "/". */}
       <div className="w-full max-w-sm space-y-6">
         <h1 className="text-2xl font-semibold">Sign in to Trip Concierge</h1>
 

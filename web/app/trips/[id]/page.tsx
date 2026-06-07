@@ -18,6 +18,7 @@ import { auth } from "@/auth";
 import { ConstraintList } from "@/components/constraint-list";
 import { ConstraintPanel } from "@/components/constraint-panel";
 import { DayChipTimeline } from "@/components/day-chip-timeline";
+import { Header } from "@/components/header";
 import { PlanAgainDialog } from "@/components/plan-again-dialog";
 import { PlanControlsPanel } from "@/components/plan-controls-panel";
 import { PlanHistoryPanel } from "@/components/plan-history-panel";
@@ -71,14 +72,19 @@ export default async function TripDetailPage({ params }: DetailPageProps) {
 
   return (
     <>
-      <header className="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
-        <nav className="mx-auto flex h-20 max-w-[1440px] items-center justify-between px-4 md:px-8 lg:px-16">
-          <Link href="/trips" className="text-label-md text-on-surface hover:text-primary">
-            ← All trips
-          </Link>
-        </nav>
-      </header>
+      <Header />
       <main className="mx-auto max-w-[1440px] px-4 pt-28 pb-12 md:px-8 lg:px-16">
+        {/* Slice 4.5c: standalone "← All trips" affordance moved out of
+         * the now-shared <Header /> and into the page body. The shared
+         * header consolidates the shell (wordmark + profile menu);
+         * back-navigation lives at the page level where it remains
+         * discoverable without polluting the global shell. */}
+        <Link
+          href="/trips"
+          className="mb-4 inline-block text-label-md text-on-surface-variant hover:text-primary"
+        >
+          ← All trips
+        </Link>
         <h1 className="mb-8 text-headline-md text-on-surface md:text-headline-lg">
           {trip.destination}
         </h1>

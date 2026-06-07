@@ -6,7 +6,9 @@
  *
  *   - No console errors / page errors on / and /login
  *   - Spec §3 palette tokens compile to expected RGB values
- *     (via theme-sentinel element in app/login/page.tsx)
+ *     (via theme-sentinel element in app/layout.tsx — slice 4.5c
+ *     migrated the sentinels out of /login so they apply to every
+ *     route via the root layout)
  *   - Spec §4.1 fonts loaded — document.fonts.check() for Montserrat
  *     and Be Vietnam Pro
  *   - Spec §8 Material Symbols glyph rendering (via material-symbols-

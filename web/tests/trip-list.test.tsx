@@ -25,6 +25,12 @@ vi.mock("@/lib/backend", () => ({
   fetchTripDetail: vi.fn(),
   mintMcpToken: vi.fn(),
 }));
+// Slice 4.5c: Header is an async RSC; vitest can't await nested
+// components rendered inside the page. Header's surface is covered
+// by tests/header.test.tsx.
+vi.mock("@/components/header", () => ({
+  Header: () => null,
+}));
 
 afterEach(() => {
   cleanup();
