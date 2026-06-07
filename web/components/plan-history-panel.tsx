@@ -38,12 +38,47 @@ function _formatDuration(ms: number): string {
   return `${ms}ms`;
 }
 
-function _formatTime(iso: string): string {
+function _formatTime(iso: string, now: Date = new Date()): string {
+  // Date-context-aware formatter (slice 4d0 polish, 2026-06-07).
+  //   same day      → "HH:MM:SS"
+  //   yesterday     → "Yesterday · HH:MM:SS"
+  //   within 7 days → "Sat · HH:MM:SS"  (3-letter weekday)
+  //   older         → "Jun 6 · HH:MM:SS"
+  // Stripping the date silently confuses readers viewing multi-day-old
+  // trips; per the slice 4d0 Sunday smoke fourth-UI-data-context-bug
+  // observation, any timestamp in a list of historical events needs
+  // relative-date framing.
+  let d: Date;
   try {
-    return new Date(iso).toLocaleTimeString(undefined, { hour12: false });
+    d = new Date(iso);
+    if (Number.isNaN(d.getTime())) throw new Error("NaN");
   } catch {
     return iso.slice(11, 19);
   }
+  const time = d.toLocaleTimeString(undefined, { hour12: false });
+
+  // Compare against now's calendar day (browser TZ).
+  const sameDay = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  if (sameDay(d, now)) return time;
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(d, yesterday)) return `Yesterday · ${time}`;
+
+  const sevenDaysAgo = new Date(now);
+  sevenDaysAgo.setDate(now.getDate() - 7);
+  if (d >= sevenDaysAgo && d < now) {
+    const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(d);
+    return `${weekday} · ${time}`;
+  }
+
+  const dateLabel = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
+    d,
+  );
+  return `${dateLabel} · ${time}`;
 }
 
 function _AgentFinishRow({ row }: { row: AgentSummaryAgentFinishRow }) {

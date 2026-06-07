@@ -29,7 +29,7 @@
  */
 
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentSummaryRow } from "@/lib/backend";
 import {
@@ -104,5 +104,77 @@ describe("<PlanHistoryPanel />", () => {
     const { PlanHistoryPanel } = await import("@/components/plan-history-panel");
     render(<PlanHistoryPanel agentSummary={_SUMMARY} />);
     expect(screen.getByText(/how this plan was made/i)).toBeDefined();
+  });
+});
+
+describe("<PlanHistoryPanel /> date-context-aware time formatter", () => {
+  // Slice 4d0 polish (2026-06-07): bare time strings stripped date
+  // context — "21:42:12" rendered identically for today's plan and
+  // yesterday's plan. The four buckets below pin the date-aware
+  // rendering per relative distance from now. AGENT_FINISH_FIXTURE
+  // timestamp is "2026-06-06T16:12:12.550713+00:00".
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const _renderWithTimestamp = async (timestamp: string) => {
+    const { PlanHistoryPanel } = await import("@/components/plan-history-panel");
+    const row: AgentSummaryRow = {
+      event: "AgentFinish",
+      timestamp,
+      elapsed_ms: 60000,
+      output_excerpt: "test",
+    };
+    render(<PlanHistoryPanel agentSummary={[row]} defaultExpanded />);
+  };
+
+  it("renders time only when timestamp is the same calendar day as now", async () => {
+    // Now = 2026-06-07 22:00:00 IST. Timestamp = 2026-06-07 14:00:00 IST
+    // (08:30 UTC). Same day → no date prefix.
+    vi.setSystemTime(new Date("2026-06-07T16:30:00Z"));
+    await _renderWithTimestamp("2026-06-07T08:30:00+00:00");
+    // Time string varies by locale TZ, but "Yesterday" / "Jun" / weekday
+    // should NOT appear.
+    expect(screen.queryByText(/Yesterday/i)).toBeNull();
+    expect(screen.queryByText(/Jun/i)).toBeNull();
+    // Just-time format is what's left.
+    expect(screen.queryByText(/Yesterday ·|· /)).toBeNull();
+  });
+
+  it("renders 'Yesterday · HH:MM:SS' when timestamp is one calendar day before now", async () => {
+    // Now = 2026-06-07. Timestamp = 2026-06-06 (the Coorg trip).
+    vi.setSystemTime(new Date("2026-06-07T16:30:00Z"));
+    await _renderWithTimestamp("2026-06-06T16:12:12.550713+00:00");
+    expect(screen.getByText(/Yesterday/)).toBeDefined();
+  });
+
+  it("renders 'Weekday · HH:MM:SS' when timestamp is within last 7 days but not yesterday", async () => {
+    // Now = Sun 2026-06-07. Timestamp = Wed 2026-06-03 → within 7 days.
+    // Expect "Wed" prefix.
+    vi.setSystemTime(new Date("2026-06-07T16:30:00Z"));
+    await _renderWithTimestamp("2026-06-03T10:00:00+00:00");
+    // Weekday label: locale-dependent but should be a 3-letter day code.
+    // Negative assertion: should NOT show "Yesterday" or "Jun" prefix.
+    expect(screen.queryByText(/Yesterday/)).toBeNull();
+    expect(screen.queryByText(/^Jun/)).toBeNull();
+    // Positive: a 3-letter weekday appears. Look for any of Mon-Sun.
+    const dayMatch = screen.queryByText(/Mon|Tue|Wed|Thu|Fri|Sat|Sun/);
+    expect(dayMatch).toBeDefined();
+  });
+
+  it("renders 'Mon D · HH:MM:SS' when timestamp is older than 7 days", async () => {
+    // Now = 2026-06-07. Timestamp = 2026-05-15 → older than 7 days.
+    // Expect "May 15" or similar locale-formatted month-day.
+    vi.setSystemTime(new Date("2026-06-07T16:30:00Z"));
+    await _renderWithTimestamp("2026-05-15T10:00:00+00:00");
+    expect(screen.queryByText(/Yesterday/)).toBeNull();
+    // Month abbreviation should appear (May or Apr depending on TZ; we
+    // assert one of them is present).
+    const monthMatch = screen.queryByText(/May|Apr|Jun|Jul/);
+    expect(monthMatch).toBeDefined();
   });
 });
