@@ -13,6 +13,7 @@ import Link from "next/link";
 
 import { auth } from "@/auth";
 import { Header } from "@/components/header";
+import { NewTripDialog } from "@/components/new-trip-dialog";
 import { TripListRow } from "@/components/trip-list-row";
 import { fetchTripList } from "@/lib/backend";
 
@@ -34,14 +35,21 @@ export default async function TripsPage() {
     <>
       <Header />
       <main className="mx-auto max-w-[1440px] px-4 pt-28 md:px-8 lg:px-16">
-        <div className="mb-8 flex items-baseline justify-between">
+        <div className="mb-8 flex items-baseline justify-between gap-4">
           <h1 className="text-headline-md text-on-surface md:text-headline-lg">Your trips</h1>
+          {/* Slice 4.5c: top-right "New trip" CTA opens the MCP-first
+           * dialog. Only shown when trips exist — empty-state has its
+           * own primary trigger below per Q6=A consolidation. */}
+          {items.length > 0 && <NewTripDialog triggerLabel="New trip" />}
         </div>
         {items.length === 0 ? (
           <div className="rounded-xl border border-dashed border-outline-variant p-8 text-center bg-surface-container-lowest">
-            <p className="text-body-lg text-on-surface font-medium">No trips yet.</p>
-            <p className="mt-2 text-body-md text-on-surface-variant">
-              Plan your first trip from Claude Desktop, or{" "}
+            <p className="text-body-lg text-on-surface font-medium mb-4">No trips yet.</p>
+            <div className="flex justify-center mb-4">
+              <NewTripDialog triggerLabel="Plan your first trip" />
+            </div>
+            <p className="text-body-md text-on-surface-variant">
+              Or{" "}
               <Link href="/" className="text-primary underline">
                 return home
               </Link>
