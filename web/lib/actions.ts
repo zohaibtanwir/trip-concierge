@@ -246,3 +246,59 @@ export async function createTripAction({
 
   return { trip_id: trip.id };
 }
+
+/**
+ * regenerateDayAction — invoked by <RegenerateDayDialog /> on the
+ * trip detail page (slice 4.6 commit 2). Consumes the existing
+ * slice-3.3 endpoint POST /trips/{tripId}/days/{dayNumber}/regenerate
+ * which enqueues a day-scoped arq job (~3-5 min wall time). Locked
+ * blocks on the day are preserved per slice 3.3's hard contract.
+ *
+ * Object-args pattern (matches addConstraint / createTrip /
+ * updateTripSettings). Returns the {job_id, status_url} pair the
+ * backend route emits; caller (dialog) navigates via router.push to
+ * the trip detail page where slice 4.2's planning-state UX takes
+ * over.
+ *
+ * Hint is optional at every layer:
+ *   - UI textarea has no required attribute
+ *   - This action's hint param is `string?`
+ *   - Backend RegenerateRequest.hint: str | None = None
+ * Empty submit is a clean "regenerate this day with no specific
+ * guidance" call.
+ */
+export interface RegenerateDayResult {
+  job_id: string;
+  status_url: string;
+}
+
+export async function regenerateDayAction({
+  userId,
+  tripId,
+  dayNumber,
+  hint,
+}: {
+  userId: string;
+  tripId: string;
+  dayNumber: number;
+  hint?: string;
+}): Promise<RegenerateDayResult> {
+  const { mcp_token } = await mintMcpToken({ userId });
+  const body: Record<string, unknown> = {};
+  if (hint !== undefined && hint.trim() !== "") body.hint = hint.trim();
+  const response = await fetch(`${env.BACKEND_URL}/trips/${tripId}/days/${dayNumber}/regenerate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-tc-token": mcp_token,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new BackendError(
+      response.status,
+      `regenerateDayAction HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  return (await response.json()) as RegenerateDayResult;
+}

@@ -353,3 +353,81 @@ describe("createTripAction", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("regenerateDayAction", () => {
+  // Slice 4.6 commit 2 — day regenerate Server Action. Single backend
+  // call to POST /trips/{tripId}/days/{dayNumber}/regenerate with an
+  // optional hint. Returns the {job_id, status_url} pair the existing
+  // route emits; caller (RegenerateDayDialog) navigates to the trip
+  // detail page where planning-state UX takes over per Q2.
+
+  it("mints token + POSTs /days/{n}/regenerate with hint body; returns {job_id, status_url}", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({ mcp_token: "jwt-regen", expires_at: "2026-09-03T00:00:00Z" }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse(
+        {
+          job_id: "regen-job-xyz",
+          status_url: "/trips/trip-1/plan/status",
+        },
+        202,
+      ),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { regenerateDayAction } = await import("@/lib/actions");
+    const result = await regenerateDayAction({
+      userId: "user-abc",
+      tripId: "trip-1",
+      dayNumber: 2,
+      hint: "more food, less hiking",
+    });
+
+    expect(result.job_id).toBe("regen-job-xyz");
+    expect(result.status_url).toBe("/trips/trip-1/plan/status");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, init] = fetchMock.mock.calls[1];
+    expect(url).toBe("http://test-backend/trips/trip-1/days/2/regenerate");
+    expect(init?.method).toBe("POST");
+    expect((init?.headers as Record<string, string>)["x-tc-token"]).toBe("jwt-regen");
+    expect(JSON.parse(init?.body as string)).toEqual({ hint: "more food, less hiking" });
+  });
+
+  it("omits hint from body when not provided (empty submit)", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ job_id: "j", status_url: "/x" }, 202));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { regenerateDayAction } = await import("@/lib/actions");
+    await regenerateDayAction({
+      userId: "user-abc",
+      tripId: "trip-1",
+      dayNumber: 1,
+    });
+
+    const [, init] = fetchMock.mock.calls[1];
+    const body = JSON.parse(init?.body as string);
+    // hint absent — backend accepts empty body OR body without the field.
+    expect(body).not.toHaveProperty("hint");
+  });
+
+  it("throws BackendError on 409 (active job in flight)", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(new Response("a refinement job is in flight", { status: 409 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { regenerateDayAction } = await import("@/lib/actions");
+    await expect(
+      regenerateDayAction({
+        userId: "user-abc",
+        tripId: "trip-1",
+        dayNumber: 2,
+      }),
+    ).rejects.toThrow(/409/);
+  });
+});
