@@ -10,20 +10,38 @@
  * source-file content read.
  */
 
+import { RegenerateDayDialog } from "@/components/regenerate-day-dialog";
 import { TripBlock } from "@/components/trip-block";
 import type { TripDay as TripDayShape } from "@/lib/backend";
 
-export function TripDay({ day }: { day: TripDayShape }) {
+interface TripDayProps {
+  day: TripDayShape;
+  // Slice 4.6 commit 2: regenerate trigger requires tripId + userId
+  // to fire the Server Action. Optional so legacy callers (none
+  // currently, but the door stays open) can skip rendering it.
+  tripId?: string;
+  userId?: string;
+}
+
+export function TripDay({ day, tripId, userId }: TripDayProps) {
+  const canRegenerate = Boolean(tripId && userId);
   return (
     <section className="mb-12">
-      <header className="mb-6">
-        <h2 className="text-headline-md text-on-surface">
-          Day {day.day_number}
-          {day.date && (
-            <span className="ml-3 text-label-sm text-on-surface-variant">{day.date}</span>
+      <header className="mb-6 flex items-baseline justify-between gap-4">
+        <div>
+          <h2 className="text-headline-md text-on-surface">
+            Day {day.day_number}
+            {day.date && (
+              <span className="ml-3 text-label-sm text-on-surface-variant">{day.date}</span>
+            )}
+          </h2>
+          {day.summary && (
+            <p className="mt-2 text-body-md text-on-surface-variant">{day.summary}</p>
           )}
-        </h2>
-        {day.summary && <p className="mt-2 text-body-md text-on-surface-variant">{day.summary}</p>}
+        </div>
+        {canRegenerate && tripId && userId && (
+          <RegenerateDayDialog tripId={tripId} userId={userId} dayNumber={day.day_number} />
+        )}
       </header>
       {day.blocks.length === 0 ? (
         <p className="text-body-md italic text-on-surface-variant">No blocks for this day yet.</p>
@@ -41,7 +59,7 @@ export function TripDay({ day }: { day: TripDayShape }) {
                 )}
               </div>
               <div className="flex-1 pb-6">
-                <TripBlock block={b} />
+                <TripBlock block={b} tripId={tripId} userId={userId} dayNumber={day.day_number} />
               </div>
             </div>
           ))}

@@ -135,7 +135,9 @@ export default async function TripDetailPage({ params }: DetailPageProps) {
                     The plan was marked succeeded but has no days yet.
                   </p>
                 ) : (
-                  trip.days.map((day) => <TripDay key={day.id} day={day} />)
+                  trip.days.map((day) => (
+                    <TripDay key={day.id} day={day} tripId={tripId} userId={userId} />
+                  ))
                 )}
               </section>
             )}

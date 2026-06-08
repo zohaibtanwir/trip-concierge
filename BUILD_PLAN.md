@@ -410,9 +410,26 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
 
 ### Slice 4.6: Edit and regenerate (block-level + day-level)
 
-- [ ] **Done when:** Single-block regen works. Day regen works. Undo last change works. Locked blocks are preserved across regens.
-- **Files to create:** `web/components/RegenerateMenu.tsx`, history stack utility
-- **Tests:** lock preservation test.
+- [x] **Done when:** PRD §F5 partial-compliance shipped per Q1=(b) sign-off: Day regenerate + Block alternative (find + apply-via-refine) + Lock toggle (always-visible material icon, optimistic UI) work end to end on `/trips/[id]`. Locked blocks survive day regenerate via the existing slice-3.3 hard contract (Logistics Planner reads `Block.locked` at dispatch time). The new block-action cluster (`mt-3 flex justify-end gap-2`) hosts both block-scoped actions; v1.0b extends with Undo.
+- ⚠️ **PRD §F5 partial compliance:** Undo last change is deferred to v1.0b under `trip-concierge-<new>` (P2). v1.0a release criteria include explicit §F5 review at Phase 5 closeout. The deferral was deliberate (Q1=b sign-off): a real Undo requires a trip-mutation history layer (lock toggle, swap, regenerate) — out of scope for the 4-commit budget. v1.0a ships 3-of-4 §F5 controls; partial compliance is honest.
+- **4-commit decomposition:**
+  - Commit 1 (`ec84ab9`) — Backend PATCH `/trips/{trip_id}/blocks/{block_id}` for lock toggle (metadata column write, no Redis touch, no enqueue, no 409 guard per Q5 design). 8 tests + live curl smoke.
+  - Commit 2 (`307a0bd`) — Web Day regenerate UX: `regenerateDayAction` + `<RegenerateDayDialog />` (native `<dialog>` + showModal, optional hint, lock-preservation + ~3-5 min disclosure copy) + `<TripDay />` header restructured (`flex items-baseline justify-between`) with right-side trigger. 8 tests + browser smoke (4 Regenerate buttons on Coorg 4-day trip).
+  - Commit 3 (`cdde680`) — Block alternative + apply-via-refine: `findAlternativeAction` (synchronous 90s wait, POST `/blocks/{id}/alternative`) + `applyAlternativeAction` (synthesizes `refinement_description` with optional Reason clause per Q-impl-c3-synth (b), POST `/trips/{id}/refine`) + `<BlockAlternativeDialog />` with 3-state machine + `<TripBlock />` action-cluster integration. 14 tests + browser smoke (30 "Swap this" buttons render on Coorg 4-day trip).
+  - Commit 4 — Lock toggle UI + apply-confirm polish + spec amendment + docs: `setBlockLockAction` + `<BlockLockToggle />` (always-visible icon, optimistic UI with revert + 3s inline error badge per Q-impl-c4a fallback — no toast primitive scope creep) + 4-state dialog machine extension (idle → loading → showing → confirming, Back-to-options preserves alternatives per Q-impl-c4b=A, Confirm fires applyAlternativeAction) + spec §9.17 block-action cluster pattern + BUILD_PLAN entry.
+- **Q4=A apply-via-refine architectural decision:** the chosen alternative is applied through `refine_trip` (hierarchical re-plan, ~10 min) rather than a direct Block write. Preserves the Budget Auditor invariant — sub-budget per day still checked — and keeps the apply path identical to every other user-driven trip mutation. Trade-off accepted: 10 min for a venue swap is heavy, but the alternative (skipping the auditor) breaks the budget guarantee.
+- **Files created:**
+  - `backend/app/routes/block_lock.py` + `backend/tests/test_block_lock_route.py`
+  - `web/components/regenerate-day-dialog.tsx` + `web/tests/regenerate-day-dialog.test.tsx`
+  - `web/components/block-alternative-dialog.tsx` + `web/tests/block-alternative-dialog.test.tsx`
+  - `web/components/block-lock-toggle.tsx` + `web/tests/block-lock-toggle.test.tsx`
+- **Files modified:** `web/lib/actions.ts` (3 new Server Actions), `web/components/trip-block.tsx` + `web/components/trip-day.tsx` (action-cluster integration), `web/app/trips/[id]/page.tsx` (thread tripId/userId), `backend/app/main.py` (router wire), `docs/design-spec.md` (§9.17 + v1.0.6 changelog), `BUILD_PLAN.md`.
+- **Tests:** 38 net new (8 backend + 30 web vitest). Cumulative web vitest: 185.
+- **Followup tickets filed during slice 4.6:**
+  - `trip-concierge-wew` (P2): User-ownership-check sweep across all trip routes (deferred from commit 1 — inherits the existing MCP-token-presence-only pattern; v1.0b security review).
+  - `trip-concierge-mbw` (P2): Undo support for block-level mutations (lock toggle, swap, regenerate) in v1.0b. Captures real user expectation across the cluster.
+- **Beads:**
+  - `trip-concierge-5qe`: Slice 4.6 (closed at merge).
 
 ### Slice 4.7: Source citations expansion + "why this was picked"
 

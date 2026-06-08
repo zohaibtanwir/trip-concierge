@@ -13,7 +13,7 @@
 
 "use server";
 
-import { BackendError, mintMcpToken, type PlanStatus } from "@/lib/backend";
+import { BackendError, type Block, mintMcpToken, type PlanStatus } from "@/lib/backend";
 import { env } from "@/lib/env";
 
 /**
@@ -245,4 +245,237 @@ export async function createTripAction({
   }
 
   return { trip_id: trip.id };
+}
+
+/**
+ * regenerateDayAction — invoked by <RegenerateDayDialog /> on the
+ * trip detail page (slice 4.6 commit 2). Consumes the existing
+ * slice-3.3 endpoint POST /trips/{tripId}/days/{dayNumber}/regenerate
+ * which enqueues a day-scoped arq job (~3-5 min wall time). Locked
+ * blocks on the day are preserved per slice 3.3's hard contract.
+ *
+ * Object-args pattern (matches addConstraint / createTrip /
+ * updateTripSettings). Returns the {job_id, status_url} pair the
+ * backend route emits; caller (dialog) navigates via router.push to
+ * the trip detail page where slice 4.2's planning-state UX takes
+ * over.
+ *
+ * Hint is optional at every layer:
+ *   - UI textarea has no required attribute
+ *   - This action's hint param is `string?`
+ *   - Backend RegenerateRequest.hint: str | None = None
+ * Empty submit is a clean "regenerate this day with no specific
+ * guidance" call.
+ */
+export interface RegenerateDayResult {
+  job_id: string;
+  status_url: string;
+}
+
+export async function regenerateDayAction({
+  userId,
+  tripId,
+  dayNumber,
+  hint,
+}: {
+  userId: string;
+  tripId: string;
+  dayNumber: number;
+  hint?: string;
+}): Promise<RegenerateDayResult> {
+  const { mcp_token } = await mintMcpToken({ userId });
+  const body: Record<string, unknown> = {};
+  if (hint !== undefined && hint.trim() !== "") body.hint = hint.trim();
+  const response = await fetch(`${env.BACKEND_URL}/trips/${tripId}/days/${dayNumber}/regenerate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-tc-token": mcp_token,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new BackendError(
+      response.status,
+      `regenerateDayAction HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  return (await response.json()) as RegenerateDayResult;
+}
+
+/**
+ * findAlternativeAction — invoked by <BlockAlternativeDialog /> on
+ * the trip detail page (slice 4.6 commit 3). Consumes the slice-3.4a
+ * SYNCHRONOUS endpoint POST /trips/{tripId}/blocks/{blockId}/alternative
+ * which runs the find_alternative crew inline (~90s wall time, 90s
+ * timeout ceiling at the backend) and returns 3 ranked Alternative
+ * options.
+ *
+ * Object-args pattern (matches addConstraint / createTrip / updateTrip /
+ * regenerateDay). Returns the backend's AlternativesList.model_dump()
+ * shape verbatim — the dialog renders the array of cards directly.
+ *
+ * Reason is optional at every layer:
+ *   - UI textarea has no required attribute
+ *   - This action's reason param is `string?`
+ *   - Backend AlternativeRequest.reason: str | None = None
+ * Empty submit is a clean "find me something else" call.
+ *
+ * 90s wait note: this is the only Server Action in the app that
+ * blocks the caller for nearly a minute. The dialog shows a spinner
+ * + agent-specialization disclosure during the wait. On 504 the
+ * action throws BackendError(504) and the dialog surfaces a
+ * "try again" message.
+ */
+export interface Alternative {
+  venue_name: string;
+  type: string;
+  duration_minutes: number;
+  est_cost: number;
+  currency: string;
+  source_urls: string[];
+  rationale: string;
+}
+
+export interface FindAlternativeResult {
+  alternatives: Alternative[];
+}
+
+export async function findAlternativeAction({
+  userId,
+  tripId,
+  blockId,
+  reason,
+}: {
+  userId: string;
+  tripId: string;
+  blockId: string;
+  reason?: string;
+}): Promise<FindAlternativeResult> {
+  const { mcp_token } = await mintMcpToken({ userId });
+  const body: Record<string, unknown> = {};
+  if (reason !== undefined && reason.trim() !== "") body.reason = reason.trim();
+  const response = await fetch(`${env.BACKEND_URL}/trips/${tripId}/blocks/${blockId}/alternative`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-tc-token": mcp_token,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new BackendError(
+      response.status,
+      `findAlternativeAction HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  return (await response.json()) as FindAlternativeResult;
+}
+
+/**
+ * applyAlternativeAction — invoked by <BlockAlternativeDialog /> after
+ * the user picks one of the 3 alternatives returned by
+ * findAlternativeAction (slice 4.6 commit 3).
+ *
+ * Q4=A apply-via-refine semantics: rather than write the chosen
+ * alternative directly into the Block row, we synthesize a
+ * refinement_description and enqueue a refine_trip job. The crew runs
+ * the swap through the hierarchical refine pipeline, which preserves
+ * the Budget Auditor invariant (sub-budget per day still checked) and
+ * keeps the apply path identical to every other user-driven trip
+ * mutation. ~10 min wall time; the dialog redirects to the trip page
+ * where slice-4.2's planning-state UX takes over.
+ *
+ * Synthesis text shape (option b — sign-off 2026-06-08):
+ *   - Always: "On Day {N}, replace '{oldVenueName}' with '{alternativeVenueName}'."
+ *   - When reason: " Reason: {reason}." appended (load-bearing — the
+ *     crew sees the WHY behind the swap, not just the WHAT).
+ *
+ * The reason is carried through from the find-alternative step's
+ * textarea (collected once, threaded both places).
+ */
+export interface ApplyAlternativeResult {
+  job_id: string;
+  status_url: string;
+}
+
+export async function applyAlternativeAction({
+  userId,
+  tripId,
+  dayNumber,
+  oldVenueName,
+  alternativeVenueName,
+  reason,
+}: {
+  userId: string;
+  tripId: string;
+  dayNumber: number;
+  oldVenueName: string;
+  alternativeVenueName: string;
+  reason?: string;
+}): Promise<ApplyAlternativeResult> {
+  const { mcp_token } = await mintMcpToken({ userId });
+  let refinement_description = `On Day ${dayNumber}, replace '${oldVenueName}' with '${alternativeVenueName}'.`;
+  if (reason !== undefined && reason.trim() !== "") {
+    refinement_description += ` Reason: ${reason.trim()}.`;
+  }
+  const response = await fetch(`${env.BACKEND_URL}/trips/${tripId}/refine`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-tc-token": mcp_token,
+    },
+    body: JSON.stringify({ refinement_description }),
+  });
+  if (!response.ok) {
+    throw new BackendError(
+      response.status,
+      `applyAlternativeAction HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  return (await response.json()) as ApplyAlternativeResult;
+}
+
+/**
+ * setBlockLockAction — invoked by <BlockLockToggle /> on the trip
+ * detail page (slice 4.6 commit 4). Consumes the slice-4.6 commit-1
+ * route PATCH /trips/{tripId}/blocks/{blockId} with body {locked}.
+ *
+ * Metadata-only column write — no Redis touch, no arq enqueue. The
+ * regenerate_day worker reads the locked snapshot at dispatch time
+ * per slice 3.3's hard contract; toggling during in-flight regen is
+ * observed at the next dispatch. No 409 guard at the backend.
+ *
+ * Returns the full BlockRead so the optimistic UI can reconcile
+ * against the server's canonical state. Per Q-impl-c4a fallback (no
+ * toast primitive in project) the dialog surface handles rejection
+ * via an inline error badge that auto-clears after 3 seconds.
+ */
+export async function setBlockLockAction({
+  userId,
+  tripId,
+  blockId,
+  locked,
+}: {
+  userId: string;
+  tripId: string;
+  blockId: string;
+  locked: boolean;
+}): Promise<Block> {
+  const { mcp_token } = await mintMcpToken({ userId });
+  const response = await fetch(`${env.BACKEND_URL}/trips/${tripId}/blocks/${blockId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "x-tc-token": mcp_token,
+    },
+    body: JSON.stringify({ locked }),
+  });
+  if (!response.ok) {
+    throw new BackendError(
+      response.status,
+      `setBlockLockAction HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  return (await response.json()) as Block;
 }

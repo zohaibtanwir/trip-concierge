@@ -924,6 +924,64 @@ prefer conversational planning.
 
 ---
 
+### 9.17 Block-action cluster
+
+Composable bottom-right action surface on every block in the trip
+detail day-by-day view (`/trips/[id]`). Introduced in slice 4.6 to
+host block-scoped user actions (lock toggle, swap, future
+mutations). Feature-axis pattern parallel to §9.16's shell-axis
+patterns — not part of the application shell.
+
+**Placement convention:**
+
+```
+mt-3 flex justify-end gap-2
+```
+
+Cluster sits below the block's content (venue name, meta row,
+optional notes preview) inside the §9.5 vertical-timeline column.
+Right-aligned so eye flow follows content → action; `gap-2` keeps
+sibling actions visually distinct without crowding.
+
+**Child constraints:**
+
+- Each child is an icon-button (`p-1.5`) OR a small text-button
+  (`px-2 py-1`, `text-label-sm`) with optional leading material
+  icon — no full-width or dialog-size children
+- Surface tokens: `border border-outline-variant bg-surface-container-lowest`,
+  `hover:bg-surface-container-low`, `transition-colors`
+- aria-label MUST name the action the click WILL take, not the
+  current state — better screen reader UX (matches the Material
+  Symbol's state-aware appearance)
+
+**Composability:**
+
+The cluster is open-ended. v1.0a instances are `<BlockLockToggle />`
+(left) + `<BlockAlternativeDialog />` (right). v1.0b adds Undo (P2
+ticket, broad scope across block-level mutations). Future block
+actions append to the cluster following the placement + child
+constraints; no closed-set discipline at the spec layer (review
+discipline polices what ships).
+
+**Always-visible pattern (Q-impl-c4c sign-off):** indicators show
+state via material icon swap (`lock_open` ↔ `lock`), not via
+presence/absence of the trigger. Discoverability beats visual
+minimalism for v1.0 features — users learn the cluster vocabulary
+once.
+
+**Optimistic UI + inline error pattern (Q-impl-c4a fallback):**
+state changes flip immediately on click. On action rejection, revert
++ surface inline `role="alert"` badge next to the trigger; auto-clear
+after 3 seconds. No global toast primitive in v1.0a (scope-creep
+deferred); inline contains the failure surface to the originating
+control.
+
+**Code references:** `web/components/trip-block.tsx` (cluster
+container), `web/components/block-lock-toggle.tsx`,
+`web/components/block-alternative-dialog.tsx`.
+
+---
+
 ## 10. Dark mode
 
 **Deferred to Phase 5.** v1.0a ships light mode only.
@@ -1362,6 +1420,7 @@ different layers (feature-axis discharge vs orthogonal-axis budget).
 
 ## Changelog
 
+- **v1.0.6** (2026-06-08) — Added §9.17 (Block-action cluster) from slice 4.6. Pattern-only spec for the composable bottom-right block-scoped action surface; v1.0a instances are `<BlockLockToggle />` + `<BlockAlternativeDialog />`. Codifies always-visible state indicators, optimistic-UI + inline-error patterns (no toast primitive scope-creep), and aria-label discipline (name the action, not the state). Additive only — no breaking changes.
 - **v1.0.5** (2026-06-07) — Added §9.16 (Application shell — Header, Landing, NewTripDialog) and §17.13 (Application shell ownership pattern meta) from slice 4.5c. Documents the non-`/trips/[id]`-bound surfaces that frame the product (sticky-glass Header, landing page, two-paths NewTripDialog) plus the methodological learning about non-feature-axis ownership budgets. Additive only — no breaking changes.
 - **v1.0.4** (2026-06-07) — Added §9.15 (Activity panel summary-row pattern) from slice 4d0 Sunday smoke fix. Documents the discriminated-union + branched-render pattern for heterogeneous event panels (PlanHistoryPanel's `callback_summary` vs `AgentFinish` rows). Additive only — no breaking changes.
 - **v1.0.3** (2026-06-06) — Added §9.14 (PlanControlsPanel, settings-shaped right-rail panel) from slice 4.5b. Extended §9.13 ConstraintPanel form sections from 4 → 6 (adds Walking limit + Per-day budget rules-shaped rows). Rewrote §17.12 as historical "partial-compliance discharged" note — PRD §F4's 8-control surface now ships complete across slices 4.5 + 4.5b. Additive only — no breaking changes.

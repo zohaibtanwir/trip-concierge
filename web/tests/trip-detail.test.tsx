@@ -37,6 +37,12 @@ vi.mock("@/lib/backend", () => ({
 vi.mock("@/components/header", () => ({
   Header: () => null,
 }));
+// Slice 4.6 commit 2: TripDay now renders <RegenerateDayDialog />
+// which uses useRouter from next/navigation. Mock to no-op (same
+// pattern as new-trip-dialog test + landing-page test).
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
 
 afterEach(() => {
   cleanup();
