@@ -92,29 +92,28 @@ function _formatTime(iso: string, now: Date = new Date()): string {
 function _AgentFinishRow({ row }: { row: AgentSummaryAgentFinishRow }) {
   // Title prefers agent_role (Path B); falls back to event name for
   // legacy JobRuns written before the enrichment shipped.
+  //
+  // Hotfix-on7 (2026-06-08 evening): output_excerpt rendering removed.
+  // The CrewAI scratchpad content (raw JSON dumps, agent reasoning
+  // commentary) was demo-inappropriate. v1.0b structured summaries
+  // (trip-concierge-q1v) will replace; until then the panel surfaces
+  // role + timing only.
   const title = row.agent_role || row.event;
   return (
-    <li key={`${row.event}-${row.timestamp}`} className="flex flex-col gap-1">
-      <div className="flex items-baseline justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary text-base" aria-hidden>
-            psychology
-          </span>
-          <span className="text-label-md text-on-surface">{title}</span>
-          {/* sr-only event-type per Q-pathb-impl-a=B: icon is
-              aria-hidden, screen readers need the semantic context. */}
-          <span className="sr-only">reasoning step</span>
-          <span className="text-label-sm text-on-surface-variant">
-            {_formatTime(row.timestamp)}
-          </span>
-        </div>
-        <span className="text-label-sm text-on-surface-variant">
-          {_formatDuration(row.elapsed_ms)}
+    <li key={`${row.event}-${row.timestamp}`} className="flex items-baseline justify-between gap-4">
+      <div className="flex items-center gap-2">
+        <span className="material-symbols-outlined text-primary text-base" aria-hidden>
+          psychology
         </span>
+        <span className="text-label-md text-on-surface">{title}</span>
+        {/* sr-only event-type per Q-pathb-impl-a=B: icon is
+            aria-hidden, screen readers need the semantic context. */}
+        <span className="sr-only">reasoning step</span>
+        <span className="text-label-sm text-on-surface-variant">{_formatTime(row.timestamp)}</span>
       </div>
-      {row.output_excerpt && (
-        <p className="text-body-sm text-on-surface-variant pl-6">{row.output_excerpt}</p>
-      )}
+      <span className="text-label-sm text-on-surface-variant">
+        {_formatDuration(row.elapsed_ms)}
+      </span>
     </li>
   );
 }
@@ -124,27 +123,23 @@ function _TaskCompletedRow({ row }: { row: AgentSummaryTaskCompletedRow }) {
   // doesn't fire (the common case under CrewAI 1.14.5). Visually
   // distinct from AgentFinish (check_circle vs psychology) to preserve
   // the completion-vs-reasoning semantic per Q-pathb-b=B.
+  //
+  // Hotfix-on7 (2026-06-08 evening): output_excerpt rendering removed
+  // for the same reason as _AgentFinishRow above.
   const title = row.agent_role || row.event;
   return (
-    <li key={`${row.event}-${row.timestamp}`} className="flex flex-col gap-1">
-      <div className="flex items-baseline justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary text-base" aria-hidden>
-            check_circle
-          </span>
-          <span className="text-label-md text-on-surface">{title}</span>
-          <span className="sr-only">agent completion</span>
-          <span className="text-label-sm text-on-surface-variant">
-            {_formatTime(row.timestamp)}
-          </span>
-        </div>
-        <span className="text-label-sm text-on-surface-variant">
-          {_formatDuration(row.elapsed_ms)}
+    <li key={`${row.event}-${row.timestamp}`} className="flex items-baseline justify-between gap-4">
+      <div className="flex items-center gap-2">
+        <span className="material-symbols-outlined text-primary text-base" aria-hidden>
+          check_circle
         </span>
+        <span className="text-label-md text-on-surface">{title}</span>
+        <span className="sr-only">agent completion</span>
+        <span className="text-label-sm text-on-surface-variant">{_formatTime(row.timestamp)}</span>
       </div>
-      {row.output_excerpt && (
-        <p className="text-body-sm text-on-surface-variant pl-6">{row.output_excerpt}</p>
-      )}
+      <span className="text-label-sm text-on-surface-variant">
+        {_formatDuration(row.elapsed_ms)}
+      </span>
     </li>
   );
 }
