@@ -19,6 +19,13 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Mutmut mutation-testing artifacts (trip-concierge-ht5)
+# `mutants/` is a generated mirror of source; .mutmut-cache stores survival
+# state. Run results go to experiments/ (also gitignored).
+backend/mutants/
+backend/.mutmut-cache
+.mutmut-cache
+
 # Node
 node_modules/
 .next/

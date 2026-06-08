@@ -33,6 +33,7 @@ trip-concierge-agents = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "mutmut>=3.6.0",
     "mypy==2.1.0",
     "pytest-asyncio==1.4.0",
     "ruff==0.15.14",
@@ -56,3 +57,11 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra -q"
+
+# Mutmut 3.x mutation testing config (trip-concierge-ht5).
+# `source_paths` scopes the run to backend app code only; tests +
+# migrations are excluded — mutating tests would be meaningless and
+# Alembic versions are auto-generated.
+[tool.mutmut]
+source_paths = ["app/"]
+pytest_add_cli_args_test_selection = ["tests/"]

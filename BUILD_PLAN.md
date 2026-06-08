@@ -431,6 +431,33 @@ The original entry bundled all four tools. Split on 2026-05-29 per the modificat
 - **Beads:**
   - `trip-concierge-5qe`: Slice 4.6 (closed at merge).
 
+### Post-slice-4.6 hotfix arc (2026-06-08): three P1s landed back-to-back after Phase 3 manual smoke
+
+The slice-4.6 close-out led directly into a same-day hotfix arc. Phase 3 manual smoke of the Pondicherry trip surfaced three independent P1 regressions; each landed as its own merged PR with the same discipline (failing test → impl → per-commit smoke → PR → CI → merge → log archive → service restart if needed → bd close). Documented here because the arc reshaped one PRD §F8 design point + added one new spec section + amended discipline rules' application.
+
+**`trip-concierge-nwk` — Dialog modal-mode regression (merge SHA `77c76e4`, PR #47)**
+- All 3 dialogs (NewTripDialog from 4.5c, RegenerateDayDialog + BlockAlternativeDialog from 4.6) had declarative `<dialog open>` JSX that caused `showModal()` to throw `InvalidStateError` silently. Dialogs rendered non-modal — no top-layer, no Escape close, no ::backdrop; map markers + DayChipTimeline tooltips overlapped
+- Fix: imperative-useEffect pattern (remove declarative `open`, drive showModal/close via useEffect, backdrop-click handler with target===currentTarget). Single-file refactor per dialog, identical shape
+- New `web/vitest.setup.ts` polyfills `HTMLDialogElement.{showModal, close}` in jsdom with real-browser semantics (InvalidStateError on declarative open) so the regression test catches it via `spy.mock.results[0].type === "return"`
+- Spec **§9.18 Dialog modal-mode pattern** added with wrong-shape/right-shape comparison + v1.0.7 changelog. Banked observation: workarounds for test infrastructure should also be tested at the level they bypass
+- 9 net new vitest tests (3 per dialog: showModal-returns-cleanly + Escape close + backdrop click)
+
+**`trip-concierge-kyh` Path B — task_callback agent_role enrichment (merge SHA `96bd251`, PR #48)**
+- Original diagnostic hypothesis (worker drift) refuted by post-restart regenerate showing 0 step events on fresh worker code. Root cause corrected: **CrewAI 1.14.5's `step_callback` fires on ReAct intermediate steps; single-shot LLM outputs produce 0 step events** — Saturday-Coorg's 7 events were the OUTLIER, not the regression-shape
+- Path B fix: surface `task_completed` events as primary visibility (previously filtered out as "redundant CrewAI hook"); enrich both AgentFinish + task_completed with `agent_role` extracted from CrewAI `step.agent.role` / `task_output.agent`
+- Frontend: PlanHistoryPanel removes filter, adds `_TaskCompletedRow` with `check_circle` icon (vs psychology for AgentFinish), titles rows with `agent_role` (event-name fallback for legacy data), friendlier footer copy ("N reasoning steps · M agent completions"), sr-only event-type for screen readers
+- Discharges `trip-concierge-nhm` (its explicit scope was the agent_role enrichment)
+- Path A (ReAct-depth-independence v1.0b) filed as `trip-concierge-7n6` for v1.0b architectural sharpening
+- Worker restart per discipline rule step 5b (uvicorn + worker both restarted; PIDs 33125 + 33126 at 19:32 IST)
+
+**`trip-concierge-3x5` — GET /plan/status latest-JobRun semantic (merge SHA `feb21c9`, PR #49)**
+- Discovered immediately after kyh Path B browser verification. PlanHistoryPanel on Coorg rendered "No agent activity recorded" because GET `/plan/status` returned the latest-by-time JobRun's `agent_summary` — and the latest was a 1-event sparse regen, displacing the rich 11-event original plan_trip
+- Fix: `_latest_job_run` SQL changed to `ORDER BY jsonb_array_length(agent_summary) DESC NULLS LAST, created_at DESC`. Richness-first; latest-time tiebreaker. Single helper, two call sites, ordering-semantic-neutral for the POST guard
+- v1.0b architectural sharpening (kind-aware JobRun selection — "original plan vs refines vs regens") tracked as `trip-concierge-d42`
+- Uvicorn-only restart (worker untouched). 2 new pytest tests pin richness-bias + tiebreaker
+
+**Cumulative tests after the arc**: backend 223/223, web vitest 200/200. Cumulative session deferrals: 7 tickets filed (`nwk` + `kyh` + `3x5` closed; `7n6` + `d42` + `mbw` + `wew` + `aqx` + `82y` open; `nhm` discharged). Three banked observations captured in respective ticket bodies — test-passes-but-production-breaks footgun; investigation-from-symptoms; outlier-vs-regression-distinction; frontend-filters-can-mask-backend-regressions; diagnostic-hypothesis-can-be-wrong-but-discipline-is-right.
+
 ### Slice 4.7: Source citations expansion + "why this was picked"
 
 - [ ] **Done when:** Tapping a block expands to show source list, confidence indicator, and rationale.
