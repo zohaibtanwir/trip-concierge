@@ -180,22 +180,31 @@ def _make_callbacks(
 
     def task_cb(task_output: Any) -> None:
         counters["task"] += 1
+        # Path B (hotfix-kyh reframe 2026-06-08): CrewAI's TaskOutput
+        # carries the agent role on .agent (str). Extract symmetrically
+        # with step_cb so frontend renders "Travel Researcher" instead
+        # of literal "task_completed". Optional — bare-string outputs
+        # from legacy or test fakes that don't supply .agent fall back
+        # to event-name framing on the frontend.
+        agent_role = getattr(task_output, "agent", None)
         logger.info(
             "task_callback.fired",
             extra={
                 "task_index": counters["task"],
                 "output_class": type(task_output).__name__,
+                "agent_role": agent_role,
             },
         )
-        events.append(
-            {
-                "event": "task_completed",
-                "task_index": counters["task"],
-                "elapsed_ms": int((time.monotonic() - started) * 1000),
-                "timestamp": datetime.now(UTC).isoformat(),
-                "output_excerpt": (str(task_output)[:200] if task_output is not None else None),
-            }
-        )
+        entry: dict[str, Any] = {
+            "event": "task_completed",
+            "task_index": counters["task"],
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "output_excerpt": (str(task_output)[:200] if task_output is not None else None),
+        }
+        if agent_role:
+            entry["agent_role"] = agent_role
+        events.append(entry)
 
     return events, step_cb, task_cb, counters
 

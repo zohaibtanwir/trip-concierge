@@ -105,10 +105,14 @@ export interface TripFull {
  * shape let `callback_summary` rows reach _formatDuration(undefined)
  * → "undefinedms" rendering).
  *
- * agent_role enrichment so AgentFinish rows can render "Researcher"
- * instead of literal "AgentFinish" — tracked as P2 ticket
- * trip-concierge-nhm. When that lands, add `agent_role?: string` to
- * the AgentFinish + task_completed variants.
+ * agent_role enrichment (Path B, hotfix-kyh reframe 2026-06-08) —
+ * Both AgentFinish and task_completed variants now carry an optional
+ * agent_role: the CrewAI role string (e.g., "Travel Researcher",
+ * "Local Coorg Expert", "Logistics Planner"). Backend extracts
+ * agent.role on step events and task_output.agent on task events.
+ * Optional because legacy JobRuns from pre-Path-B writes lack it;
+ * the renderer falls back to event-name framing when absent. This
+ * discharges trip-concierge-nhm.
  */
 export type AgentSummaryRow =
   | AgentSummaryAgentFinishRow
@@ -120,6 +124,7 @@ export interface AgentSummaryAgentFinishRow {
   timestamp: string;
   elapsed_ms: number;
   output_excerpt?: string;
+  agent_role?: string;
 }
 
 export interface AgentSummaryTaskCompletedRow {
@@ -128,6 +133,7 @@ export interface AgentSummaryTaskCompletedRow {
   elapsed_ms: number;
   output_excerpt?: string;
   task_index: number;
+  agent_role?: string;
 }
 
 export interface AgentSummaryCallbackSummaryRow {

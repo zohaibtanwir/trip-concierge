@@ -88,12 +88,30 @@ class _FakeStep:
         self.output = output
 
 
+class _FakeTaskOutput:
+    """Mimics CrewAI's TaskOutput shape: .agent (str) + stringification.
+
+    Path B (hotfix-kyh reframe 2026-06-08): CrewAI's TaskOutput passes
+    the agent ROLE STRING via .agent (verified at
+    crewai/tasks/task_output.py:42 — `agent: str`). The previous fakes
+    passed bare strings to task_callback; the worker's task_cb didn't
+    extract agent_role because the string had no .agent attribute.
+    Path B fixes the extraction; this fake mirrors production shape so
+    tests pin the contract end-to-end.
+    """
+
+    def __init__(self, agent_role: str, output: str) -> None:
+        self.agent = agent_role
+        self._output = output
+
+    def __str__(self) -> str:
+        return self._output
+
+
 def _make_crew_run_that_fires_callback(output: dict[str, Any]):
     """Build a fake crew.run that invokes BOTH step_callback and
-    task_callback (slice qek-a contract). This is the "everything works"
-    fake — qek-a's diagnostics-and-workaround design wires both
-    callbacks; tests for scenarios where only one fires use the
-    per-scenario fakes below.
+    task_callback. Path B: task_callback receives _FakeTaskOutput so the
+    worker's agent_role extraction is exercised end-to-end.
     """
 
     def _crew_run(destination: str, step_callback=None, task_callback=None, **kwargs):  # noqa: ANN001
@@ -102,29 +120,28 @@ def _make_crew_run_that_fires_callback(output: dict[str, Any]):
             step_callback(_FakeStep("Local Expert", "narrowed picks"))
             step_callback(_FakeStep("Logistics Planner", "built day-by-day plan"))
         if task_callback is not None:
-            task_callback("research task complete")
-            task_callback("local-expert task complete")
-            task_callback("planning task complete")
+            task_callback(_FakeTaskOutput("Travel Researcher", "research task complete"))
+            task_callback(_FakeTaskOutput("Local Expert", "local-expert task complete"))
+            task_callback(_FakeTaskOutput("Logistics Planner", "planning task complete"))
         return output
 
     return _crew_run
 
 
 def _make_crew_run_that_fires_only_task_callback(output: dict[str, Any]):
-    """Test A scenario — qek symptom replayed. CrewAI's step_callback
-    pathway is silently bypassed (the diagnosis hypothesis we want to
-    confirm in production), but crew.task_callback still fires once per
-    task. If the next real worker run lands in this state, diagnostic 2
-    has BOTH revealed the bug AND provided a working observability
-    surface — task_callback alone gives 3 events per crew run.
+    """Test A scenario — qek/kyh symptom replayed. step_callback path is
+    silent (single-shot LLM outputs produce no intermediate steps), but
+    task_callback fires once per task with the TaskOutput carrying the
+    agent role. Path B's whole point: this scenario still produces
+    useful agent attribution.
     """
 
     def _crew_run(destination: str, step_callback=None, task_callback=None, **kwargs):  # noqa: ANN001
-        # step_callback NEVER fires — the qek symptom.
+        # step_callback NEVER fires — the kyh-reframe symptom.
         if task_callback is not None:
-            task_callback("research task complete")
-            task_callback("local-expert task complete")
-            task_callback("planning task complete")
+            task_callback(_FakeTaskOutput("Travel Researcher", "research task complete"))
+            task_callback(_FakeTaskOutput("Local Expert", "local-expert task complete"))
+            task_callback(_FakeTaskOutput("Logistics Planner", "planning task complete"))
         return output
 
     return _crew_run
@@ -183,10 +200,15 @@ async def test_success_writes_job_run_with_agent_summary() -> None:
     assert job_run.status == "succeeded"
     assert job_run.error is None
 
-    # Filter-based assertions (slice qek-a discipline) — durable against
-    # adding more event types in future diagnostics.
+    # Filter-based assertions (slice qek-a discipline + Path B reframe) —
+    # durable against adding more event types in future diagnostics. Path B
+    # (2026-06-08): task_completed events now also carry agent_role, so
+    # discriminate step vs task by `event` field rather than agent_role
+    # presence.
     summary = job_run.agent_summary
-    step_events = [e for e in summary if e.get("agent_role") is not None]
+    step_events = [
+        e for e in summary if e.get("event") not in ("task_completed", "callback_summary")
+    ]
     task_events = [e for e in summary if e.get("event") == "task_completed"]
     summary_events = [e for e in summary if e.get("event") == "callback_summary"]
     assert len(step_events) == 3, f"3 step events expected from 3 agents; got {summary}"
@@ -320,11 +342,16 @@ async def test_task_callback_alone_populates_agent_summary_when_step_callback_si
     assert len(added) == 1
     summary = added[0].agent_summary
 
-    step_events = [e for e in summary if e.get("agent_role") is not None]
+    # Discriminate step vs task by `event` field (Path B 2026-06-08:
+    # task events also carry agent_role now, so the prior agent_role
+    # presence filter would over-count).
+    step_events = [
+        e for e in summary if e.get("event") not in ("task_completed", "callback_summary")
+    ]
     task_events = [e for e in summary if e.get("event") == "task_completed"]
     summary_events = [e for e in summary if e.get("event") == "callback_summary"]
-    assert len(step_events) == 0, "step_callback path is silent — the qek symptom"
-    assert len(task_events) == 3, "task_callback fires 3 times — the qek workaround"
+    assert len(step_events) == 0, "step_callback path is silent — the qek/kyh symptom"
+    assert len(task_events) == 3, "task_callback fires 3 times — Path B primary signal"
     assert len(summary_events) == 1
     assert summary_events[0]["step_callback_count"] == 0
     assert summary_events[0]["task_callback_count"] == 3
@@ -335,6 +362,17 @@ async def test_task_callback_alone_populates_agent_summary_when_step_callback_si
         assert evt["task_index"] == idx
         assert "elapsed_ms" in evt
         assert "timestamp" in evt
+
+    # Path B (hotfix-kyh reframe 2026-06-08): task_callback receives
+    # CrewAI TaskOutput which carries .agent (role string). The worker
+    # MUST extract that into agent_role on each task_completed event —
+    # without it, the frontend can't show "Travel Researcher" as the
+    # row title and falls back to literal "task_completed".
+    expected_roles = ["Travel Researcher", "Local Expert", "Logistics Planner"]
+    actual_roles = [evt.get("agent_role") for evt in task_events]
+    assert actual_roles == expected_roles, (
+        f"task_completed events must carry agent_role; got {actual_roles}"
+    )
 
 
 @pytest.mark.asyncio
@@ -358,6 +396,24 @@ async def test_both_callbacks_firing_reflects_real_counts_in_summary_entry() -> 
     assert len(summary_events) == 1
     assert summary_events[0]["step_callback_count"] == 3
     assert summary_events[0]["task_callback_count"] == 3
+
+    # Path B: both step + task events carry agent_role symmetrically.
+    # Step events extract from _FakeStep.agent.role; task events extract
+    # from _FakeTaskOutput.agent. Both should produce identical role
+    # strings for the "everything works" demo state. The worker writes
+    # type(step).__name__ as the `event` field; under the _FakeStep
+    # fake that's "_FakeStep" (under real CrewAI it's "AgentFinish").
+    # Filter by NOT-task-and-NOT-summary so the discriminator works
+    # under both fake + real shapes.
+    step_roles = [
+        e.get("agent_role")
+        for e in summary
+        if e.get("event") not in ("task_completed", "callback_summary")
+    ]
+    task_roles = [e.get("agent_role") for e in summary if e.get("event") == "task_completed"]
+    expected = ["Travel Researcher", "Local Expert", "Logistics Planner"]
+    assert step_roles == expected, f"step_callback agent_role; got {step_roles}"
+    assert task_roles == expected, f"task_callback agent_role; got {task_roles}"
 
 
 @pytest.mark.asyncio
