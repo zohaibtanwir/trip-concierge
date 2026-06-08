@@ -7,12 +7,19 @@
  *   transit → directions_car
  *   rest    → bed
  *
+ * Slice 4.6 commit 3 — bottom-right block-action cluster. Currently
+ * houses the "Swap this" trigger; commit 4 adds the lock toggle
+ * adjacent. tripId/userId/dayNumber are optional so legacy callers
+ * (none currently, but the door stays open) can skip rendering the
+ * action cluster.
+ *
  * The block-expand surface (Sheet/Dialog) wraps this in
  * <BlockExpand /> at the page level. This component itself is the
  * default (collapsed) rendering — venue name + meta line + optional
- * notes preview.
+ * notes preview + action cluster.
  */
 
+import { BlockAlternativeDialog } from "@/components/block-alternative-dialog";
 import type { Block } from "@/lib/backend";
 
 const _ICON_BY_TYPE: Record<string, string> = {
@@ -36,10 +43,18 @@ function _formatDuration(minutes: number): string | null {
   return `${m}m`;
 }
 
-export function TripBlock({ block }: { block: Block }) {
+interface TripBlockProps {
+  block: Block;
+  tripId?: string;
+  userId?: string;
+  dayNumber?: number;
+}
+
+export function TripBlock({ block, tripId, userId, dayNumber }: TripBlockProps) {
   const cost = _formatCost(block.est_cost, block.currency);
   const duration = _formatDuration(block.duration_minutes);
   const icon = _ICON_BY_TYPE[block.type] ?? "place";
+  const canSwap = Boolean(tripId && userId && dayNumber !== undefined);
 
   return (
     <div>
@@ -55,6 +70,18 @@ export function TripBlock({ block }: { block: Block }) {
         {cost && <span>{cost}</span>}
       </div>
       {block.notes && <p className="mt-2 text-body-md text-on-surface-variant">{block.notes}</p>}
+      {canSwap && tripId && userId && dayNumber !== undefined && (
+        <div className="mt-3 flex justify-end gap-2">
+          {/* Lock icon placeholder — commit 4 drops <BlockLockToggle /> here. */}
+          <BlockAlternativeDialog
+            tripId={tripId}
+            userId={userId}
+            blockId={block.id}
+            blockVenueName={block.venue_name}
+            dayNumber={dayNumber}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -431,3 +431,192 @@ describe("regenerateDayAction", () => {
     ).rejects.toThrow(/409/);
   });
 });
+
+describe("findAlternativeAction", () => {
+  // Slice 4.6 commit 3 — block alternative Server Action. Synchronous
+  // call to POST /trips/{tripId}/blocks/{blockId}/alternative; backend
+  // runs find_alternative crew with ~90s timeout, returns 3 ranked
+  // AlternativesList items. Wrapper shape returned to caller is the
+  // same model_dump the backend emits.
+
+  it("mints token + POSTs /blocks/{id}/alternative with reason; returns alternatives array", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({ mcp_token: "jwt-alt", expires_at: "2026-09-03T00:00:00Z" }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({
+        alternatives: [
+          {
+            venue_name: "Tadiandamol Trek Base",
+            type: "activity",
+            duration_minutes: 240,
+            est_cost: 0,
+            currency: "INR",
+            source_urls: ["https://example.com/tadiandamol"],
+            rationale: "Coorg's highest peak; trek-friendly for couples on a budget.",
+          },
+          {
+            venue_name: "Raja's Seat Sunset Point",
+            type: "venue",
+            duration_minutes: 60,
+            est_cost: 50,
+            currency: "INR",
+            source_urls: ["https://example.com/rajas-seat"],
+            rationale: "Quintessential Madikeri sunset spot; minimal walking.",
+          },
+          {
+            venue_name: "Abbey Falls Trail",
+            type: "venue",
+            duration_minutes: 90,
+            est_cost: 100,
+            currency: "INR",
+            source_urls: ["https://example.com/abbey-falls"],
+            rationale: "Short walk, photographic, near other Madikeri stops.",
+          },
+        ],
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { findAlternativeAction } = await import("@/lib/actions");
+    const result = await findAlternativeAction({
+      userId: "user-abc",
+      tripId: "trip-1",
+      blockId: "block-uuid-123",
+      reason: "too touristy",
+    });
+
+    expect(result.alternatives).toHaveLength(3);
+    expect(result.alternatives[0].venue_name).toBe("Tadiandamol Trek Base");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, init] = fetchMock.mock.calls[1];
+    expect(url).toBe("http://test-backend/trips/trip-1/blocks/block-uuid-123/alternative");
+    expect(init?.method).toBe("POST");
+    expect((init?.headers as Record<string, string>)["x-tc-token"]).toBe("jwt-alt");
+    expect(JSON.parse(init?.body as string)).toEqual({ reason: "too touristy" });
+  });
+
+  it("omits reason from body when not provided", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ alternatives: [] }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { findAlternativeAction } = await import("@/lib/actions");
+    await findAlternativeAction({
+      userId: "user-abc",
+      tripId: "trip-1",
+      blockId: "block-1",
+    });
+
+    const [, init] = fetchMock.mock.calls[1];
+    const body = JSON.parse(init?.body as string);
+    expect(body).not.toHaveProperty("reason");
+  });
+
+  it("throws BackendError on 504 (90s timeout from backend)", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(new Response("timed out", { status: 504 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { findAlternativeAction } = await import("@/lib/actions");
+    await expect(
+      findAlternativeAction({
+        userId: "user-abc",
+        tripId: "trip-1",
+        blockId: "block-1",
+      }),
+    ).rejects.toThrow(/504/);
+  });
+});
+
+describe("applyAlternativeAction", () => {
+  // Slice 4.6 commit 3 — Q4=A sign-off: apply the chosen alternative
+  // via refine_trip rather than a direct DB write. Preserves the
+  // Budget Auditor invariant. Synthesizes a refinement_description
+  // that names the day, old venue, and alternative; the crew handles
+  // the swap through the hierarchical pipeline.
+
+  it("mints token + POSTs /trips/{id}/refine with synthesized swap text; returns {job_id, status_url}", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt-apply", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({ job_id: "refine-job-xyz", status_url: "/trips/trip-1/plan/status" }, 202),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { applyAlternativeAction } = await import("@/lib/actions");
+    const result = await applyAlternativeAction({
+      userId: "user-abc",
+      tripId: "trip-1",
+      dayNumber: 2,
+      oldVenueName: "Tiger Tiger",
+      alternativeVenueName: "Coorg Cuisine",
+    });
+
+    expect(result.job_id).toBe("refine-job-xyz");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, init] = fetchMock.mock.calls[1];
+    expect(url).toBe("http://test-backend/trips/trip-1/refine");
+    expect(init?.method).toBe("POST");
+    expect((init?.headers as Record<string, string>)["x-tc-token"]).toBe("jwt-apply");
+    // Synthesized prompt must name day, old venue, alternative — load-bearing
+    // for the crew to target the right swap. Loose regex match so copy
+    // polish doesn't require test churn.
+    const body = JSON.parse(init?.body as string);
+    expect(body.refinement_description).toMatch(/Day 2/i);
+    expect(body.refinement_description).toMatch(/Tiger Tiger/);
+    expect(body.refinement_description).toMatch(/Coorg Cuisine/);
+  });
+
+  it("throws BackendError on 409 (refine in flight)", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(new Response("active job", { status: 409 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { applyAlternativeAction } = await import("@/lib/actions");
+    await expect(
+      applyAlternativeAction({
+        userId: "user-abc",
+        tripId: "trip-1",
+        dayNumber: 1,
+        oldVenueName: "X",
+        alternativeVenueName: "Y",
+      }),
+    ).rejects.toThrow(/409/);
+  });
+
+  it("appends a Reason clause to the synthesis when reason is provided", async () => {
+    // Q-impl-c3-synth (option b): when the user provided a reason in
+    // the find-alternative step, carry it forward to the refine
+    // prompt so the crew has the WHY behind the swap. Without reason,
+    // the synthesis stays minimal (covered by the first test).
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ job_id: "j", status_url: "/x" }, 202));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { applyAlternativeAction } = await import("@/lib/actions");
+    await applyAlternativeAction({
+      userId: "user-abc",
+      tripId: "trip-1",
+      dayNumber: 3,
+      oldVenueName: "Tiger Tiger",
+      alternativeVenueName: "Coorg Cuisine",
+      reason: "too touristy",
+    });
+
+    const [, init] = fetchMock.mock.calls[1];
+    const body = JSON.parse(init?.body as string);
+    expect(body.refinement_description).toMatch(/Day 3/i);
+    expect(body.refinement_description).toMatch(/Tiger Tiger/);
+    expect(body.refinement_description).toMatch(/Coorg Cuisine/);
+    // Load-bearing: the reason text must appear so the crew sees it.
+    expect(body.refinement_description).toMatch(/Reason: too touristy/i);
+  });
+});

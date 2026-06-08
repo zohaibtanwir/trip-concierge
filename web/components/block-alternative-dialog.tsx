@@ -1,0 +1,260 @@
+/**
+ * BlockAlternativeDialog — block-scoped swap trigger (slice 4.6 commit 3).
+ *
+ * Per Q3 sign-off (option B): "Swap this" button on block → modal →
+ * IDLE state (optional reason textarea + 90s disclosure) → user
+ * submits → LOADING state (~90s spinner with Researcher-specialization
+ * copy) → SHOWING state (3 ranked alternative cards with per-card
+ * Apply CTAs) → user picks one → applyAlternativeAction enqueues a
+ * refine job → page navigates to /trips/[id] where slice 4.2's
+ * planning-state UX takes over.
+ *
+ * 3-state machine: idle | loading | showing. Error state is overlaid
+ * on top of the current state (visible via role="alert"). Per Q3-impl
+ * sign-off: confirm step deferred to commit 4 polish — apply on the
+ * Showing-state card is a single-click commit to the refine.
+ *
+ * Native <dialog> + showModal pattern (mirror of RegenerateDayDialog
+ * commit 2 + NewTripDialog slice 4.5c commit 3): focus trap, escape,
+ * backdrop click — all platform-provided.
+ *
+ * Reason is collected once in IDLE and threaded both to
+ * findAlternativeAction (ranking context) and applyAlternativeAction
+ * (refinement_description "Reason:" clause for the crew prompt).
+ */
+
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
+
+import { type Alternative, applyAlternativeAction, findAlternativeAction } from "@/lib/actions";
+
+interface BlockAlternativeDialogProps {
+  tripId: string;
+  userId: string;
+  blockId: string;
+  blockVenueName: string;
+  dayNumber: number;
+}
+
+type DialogState = "idle" | "loading" | "showing";
+
+export function BlockAlternativeDialog({
+  tripId,
+  userId,
+  blockId,
+  blockVenueName,
+  dayNumber,
+}: BlockAlternativeDialogProps) {
+  const router = useRouter();
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<DialogState>("idle");
+  const [reason, setReason] = useState("");
+  const [alternatives, setAlternatives] = useState<Alternative[]>([]);
+  const [applying, setApplying] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  function _openDialog() {
+    setOpen(true);
+    setState("idle");
+    setError(null);
+    queueMicrotask(() => {
+      try {
+        dialogRef.current?.showModal();
+      } catch {
+        // jsdom or older browsers.
+      }
+    });
+  }
+
+  function _closeDialog() {
+    try {
+      dialogRef.current?.close();
+    } catch {
+      // jsdom or older browsers.
+    }
+    setOpen(false);
+    setState("idle");
+    setReason("");
+    setAlternatives([]);
+    setApplying(null);
+    setError(null);
+  }
+
+  async function _handleFind(e: React.FormEvent) {
+    e.preventDefault();
+    if (state === "loading") return;
+    setState("loading");
+    setError(null);
+    try {
+      const result = await findAlternativeAction({
+        userId,
+        tripId,
+        blockId,
+        reason: reason.trim() || undefined,
+      });
+      setAlternatives(result.alternatives);
+      setState("showing");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to find alternatives");
+      setState("idle");
+    }
+  }
+
+  async function _handleApply(alt: Alternative) {
+    if (applying !== null) return;
+    setApplying(alt.venue_name);
+    setError(null);
+    try {
+      await applyAlternativeAction({
+        userId,
+        tripId,
+        dayNumber,
+        oldVenueName: blockVenueName,
+        alternativeVenueName: alt.venue_name,
+        reason: reason.trim() || undefined,
+      });
+      _closeDialog();
+      router.push(`/trips/${tripId}`);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to apply alternative");
+      setApplying(null);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={_openDialog}
+        className="inline-flex items-center gap-1 rounded-md border border-outline-variant bg-surface-container-lowest px-2 py-1 text-label-sm text-on-surface hover:bg-surface-container-low transition-colors"
+      >
+        <span className="material-symbols-outlined text-sm" aria-hidden>
+          swap_horiz
+        </span>
+        Swap this
+      </button>
+      {open && (
+        <dialog
+          open
+          ref={dialogRef}
+          onClose={() => setOpen(false)}
+          className="rounded-xl bg-surface-container-lowest p-0 border border-outline-variant shadow-2xl backdrop:bg-black/40 backdrop:backdrop-blur-sm m-auto max-w-lg w-[calc(100%-2rem)]"
+        >
+          <div className="p-6 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <h2 className="text-headline-sm text-on-surface">
+                Find alternatives for <span className="font-mono">{blockVenueName}</span>
+              </h2>
+              <button
+                type="button"
+                onClick={_closeDialog}
+                aria-label="Close"
+                className="material-symbols-outlined text-on-surface-variant hover:text-on-surface transition-colors text-base p-1"
+              >
+                close
+              </button>
+            </div>
+
+            {state === "idle" && (
+              <form onSubmit={_handleFind}>
+                <p className="text-body-md text-on-surface-variant mb-4">
+                  The Researcher will suggest 3 alternatives for this block — this takes about a
+                  minute (~90 seconds).
+                </p>
+                <div className="mb-4">
+                  <label
+                    htmlFor="bad-reason"
+                    className="block text-label-md text-on-surface mb-1.5"
+                  >
+                    Reason <span className="text-on-surface-variant">(optional)</span>
+                  </label>
+                  <textarea
+                    id="bad-reason"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="e.g., too touristy, closed for renovations, over budget"
+                    rows={3}
+                    className="w-full px-3 py-2 rounded border border-outline-variant bg-surface-container-lowest text-body-md focus-visible:ring-2 focus-visible:ring-primary resize-none"
+                  />
+                  <p className="mt-1 text-label-sm text-on-surface-variant">
+                    Helps the Researcher rank alternatives. Carried through to the swap prompt.
+                  </p>
+                </div>
+                {error && (
+                  <p className="mb-4 text-body-sm text-error" role="alert">
+                    {error}
+                  </p>
+                )}
+                <button
+                  type="submit"
+                  className="w-full rounded-lg bg-primary px-6 py-2.5 text-label-md text-on-primary hover:bg-primary/90 transition-colors"
+                >
+                  Find alternatives
+                </button>
+              </form>
+            )}
+
+            {state === "loading" && (
+              <div className="py-8 text-center">
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent mb-4" />
+                <p className="text-body-lg text-on-surface mb-1">
+                  The Researcher is finding 3 options for you
+                </p>
+                <p className="text-body-sm text-on-surface-variant">
+                  This takes about a minute. Please wait — don't close this window.
+                </p>
+              </div>
+            )}
+
+            {state === "showing" && (
+              <>
+                <p className="text-body-md text-on-surface-variant mb-4">
+                  The Researcher found {alternatives.length}{" "}
+                  {alternatives.length === 1 ? "alternative" : "alternatives"}. Pick one to swap;
+                  the crew will re-plan the trip (~10 min).
+                </p>
+                {error && (
+                  <p className="mb-4 text-body-sm text-error" role="alert">
+                    {error}
+                  </p>
+                )}
+                <div className="space-y-3">
+                  {alternatives.map((alt) => (
+                    <div
+                      key={alt.venue_name}
+                      className="rounded-lg border border-outline-variant p-4 bg-surface-container-lowest"
+                    >
+                      <h3 className="text-title-md text-on-surface mb-1">{alt.venue_name}</h3>
+                      <p className="text-body-sm text-on-surface-variant mb-2">{alt.rationale}</p>
+                      <div className="flex flex-wrap gap-3 text-label-sm text-on-surface-variant mb-3">
+                        <span>{alt.type}</span>
+                        {alt.duration_minutes > 0 && <span>{alt.duration_minutes} min</span>}
+                        {alt.est_cost > 0 && (
+                          <span>
+                            {alt.currency} {alt.est_cost}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => _handleApply(alt)}
+                        disabled={applying !== null}
+                        className="rounded-md bg-primary px-4 py-1.5 text-label-md text-on-primary hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {applying === alt.venue_name ? "Applying…" : "Apply"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </dialog>
+      )}
+    </>
+  );
+}

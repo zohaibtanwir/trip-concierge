@@ -59,7 +59,7 @@ export function TripDay({ day, tripId, userId }: TripDayProps) {
                 )}
               </div>
               <div className="flex-1 pb-6">
-                <TripBlock block={b} />
+                <TripBlock block={b} tripId={tripId} userId={userId} dayNumber={day.day_number} />
               </div>
             </div>
           ))}
