@@ -157,9 +157,10 @@ describe("<PlanHistoryPanel /> Path B — agent_role + task_completed rendering"
     const { PlanHistoryPanel } = await import("@/components/plan-history-panel");
     render(<PlanHistoryPanel agentSummary={[row]} defaultExpanded />);
     expect(screen.getByText(/Travel Researcher/)).toBeDefined();
-    // The event excerpt should also appear so the demo audience sees
-    // what the agent actually accomplished.
-    expect(screen.getByText(/12 venues identified/)).toBeDefined();
+    // Hotfix-on7: excerpt rendering removed; demo-inappropriate
+    // CrewAI scratchpad content stripped. v1.0b structured summaries
+    // (trip-concierge-q1v) will replace.
+    expect(screen.queryByText(/12 venues identified/)).toBeNull();
   });
 
   it("task_completed row uses check_circle icon; AgentFinish uses psychology (Q-pathb-b=B)", async () => {
@@ -187,10 +188,13 @@ describe("<PlanHistoryPanel /> Path B — agent_role + task_completed rendering"
     expect(screen.getByText("psychology")).toBeDefined();
   });
 
-  it("renders task_completed output_excerpt so the demo shows what the agent accomplished", async () => {
-    // The whole point of Path B: visibility into the agent's
-    // contribution, not just that it fired. The output_excerpt is
-    // the load-bearing content for the demo narrative.
+  it("does NOT render output_excerpt — hotfix on7 strips raw scratchpad content", async () => {
+    // Hotfix-on7 (2026-06-08 evening): demo verification showed
+    // CrewAI's output_excerpt contained raw JSON fragments + agent
+    // scratchpad reasoning — demo-inappropriate. Option B fix: strip
+    // the rendering entirely. v1.0b will replace with structured
+    // summaries (trip-concierge-q1v). Until then, the panel shows
+    // only agent_role + timestamp + duration.
     const row: AgentSummaryRow = {
       event: "task_completed",
       timestamp: "2026-06-08T12:23:00.000+00:00",
@@ -202,7 +206,28 @@ describe("<PlanHistoryPanel /> Path B — agent_role + task_completed rendering"
     };
     const { PlanHistoryPanel } = await import("@/components/plan-history-panel");
     render(<PlanHistoryPanel agentSummary={[row]} defaultExpanded />);
-    expect(screen.getByText(/French Quarter morning/)).toBeDefined();
+    // Load-bearing: the excerpt content must NOT appear in rendered output.
+    expect(screen.queryByText(/French Quarter morning/)).toBeNull();
+    // The clean surface (role + timing) still renders.
+    expect(screen.getByText(/Logistics Planner/)).toBeDefined();
+    expect(screen.getByText(/5\.0\s*s/)).toBeDefined();
+  });
+
+  it("does NOT render output_excerpt on AgentFinish rows either (parity with task_completed)", async () => {
+    // The Coorg trip's AgentFinish rows had raw pydantic dumps in
+    // output_excerpt ("days=[Day(day_number=1, date=None, ...)]").
+    // Same fix applies to both row variants for consistency.
+    const row: AgentSummaryRow = {
+      event: "AgentFinish",
+      timestamp: "2026-06-06T16:12:12.550713+00:00",
+      elapsed_ms: 224413,
+      output_excerpt: "Great — I now have the geographic context to anchor the cost validation.",
+      agent_role: "Travel Researcher",
+    };
+    const { PlanHistoryPanel } = await import("@/components/plan-history-panel");
+    render(<PlanHistoryPanel agentSummary={[row]} defaultExpanded />);
+    expect(screen.queryByText(/geographic context/)).toBeNull();
+    expect(screen.getByText(/Travel Researcher/)).toBeDefined();
   });
 
   it("renders both step + task events when both fire (Q-pathb-e=A: full transparency)", async () => {
