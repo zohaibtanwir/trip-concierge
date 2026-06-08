@@ -982,6 +982,107 @@ container), `web/components/block-lock-toggle.tsx`,
 
 ---
 
+### 9.18 Dialog modal-mode pattern
+
+Native HTML `<dialog>` with imperative `showModal()` / `close()`
+driven by React state via `useEffect`. Mandatory for every modal
+surface that needs top-layer placement, backdrop, focus trap, or
+native Escape close. Introduced as hotfix `trip-concierge-nwk`
+(2026-06-08) after slice 4.5c + slice 4.6 shipped 3 dialogs with a
+broken pattern that left them non-modal in real browsers.
+
+**The footgun (don't repeat).** Setting the `open` attribute
+declaratively in JSX makes `showModal()` throw `InvalidStateError`,
+which gets caught + swallowed by the surrounding try/catch and
+leaves the dialog in non-modal mode. Non-modal `<dialog>` doesn't
+get top-layer z-index (any positioned ancestor with z-index can
+overlap — maps, tooltips, sticky headers), doesn't render the
+`::backdrop` pseudo-element, doesn't respond to Escape, doesn't
+trap focus.
+
+```tsx
+// ❌ WRONG — what shipped in slice 4.5c / 4.6 and broke production
+{open && (
+  <dialog open ref={dialogRef} onClose={() => setOpen(false)}>
+    {/* showModal() throws InvalidStateError because `open` is set;
+        try/catch swallows; dialog renders non-modal. Map markers and
+        tooltips overlap; Escape doesn't close. */}
+  </dialog>
+)}
+
+function _openDialog() {
+  setOpen(true);
+  queueMicrotask(() => {
+    try { dialogRef.current?.showModal(); }
+    catch { /* silently swallowed */ }
+  });
+}
+```
+
+```tsx
+// ✅ RIGHT — hotfix-nwk pattern
+<dialog
+  ref={dialogRef}
+  onClose={() => setOpen(false)}    // syncs state on native Escape close
+  onClick={_backdropClick}           // ::backdrop click closes
+  className="..."
+>
+  {open && <div className="p-6">...content...</div>}
+</dialog>
+
+useEffect(() => {
+  const dlg = dialogRef.current;
+  if (!dlg) return;
+  if (open && !dlg.open) {
+    try { dlg.showModal(); }
+    catch { dlg.setAttribute("open", ""); }   // jsdom-only fallback
+  } else if (!open && dlg.open) {
+    try { dlg.close(); }
+    catch { dlg.removeAttribute("open"); }
+  }
+}, [open]);
+
+function _backdropClick(e: React.MouseEvent<HTMLDialogElement>) {
+  // Clicks on the ::backdrop pseudo-element have target === the dialog
+  // element itself per HTML spec. Clicks on the inner content div have
+  // target === that div, so this only fires on actual backdrop area.
+  if (e.target === dialogRef.current) setOpen(false);
+}
+```
+
+**Key invariants:**
+
+- `<dialog>` node is ALWAYS in the DOM. Children are gated by `open`
+  state so test queries can still pin "content absent before click."
+- NO declarative `open` attribute — the only place `open` ever gets
+  set is inside `showModal()` (or the jsdom setAttribute fallback).
+- One `useEffect([open])` handles both directions (open and close).
+- `onClose` covers native Escape AND any programmatic `dlg.close()`
+  call — the same event fires for both.
+- `onClick` with `target === dialogRef.current` covers backdrop close
+  without intercepting clicks inside content.
+
+**Test infrastructure.** jsdom does not implement
+`HTMLDialogElement.{showModal, close}`. `web/vitest.setup.ts` polyfills
+both to mirror real-browser semantics — including the
+`InvalidStateError` throw on declarative `open`. Tests must include a
+regression pin asserting `vi.spyOn(HTMLDialogElement.prototype,
+"showModal").mock.results[0].type === "return"` so any future
+contributor who reintroduces the declarative `open` pattern fails CI
+at the test layer, not at production smoke. **Banked observation from
+hotfix-nwk: workarounds for test infrastructure should also be tested
+at the level they bypass.** The previous try/catch silently swallowed
+both jsdom's missing-method TypeError AND real-browser
+InvalidStateError; future infrastructure gaps must be explicit
+(polyfilled with matching semantics), not silent.
+
+**Code references:** `web/vitest.setup.ts` (polyfill),
+`web/components/new-trip-dialog.tsx` (slice 4.5c c3),
+`web/components/regenerate-day-dialog.tsx` (slice 4.6 c2),
+`web/components/block-alternative-dialog.tsx` (slice 4.6 c3).
+
+---
+
 ## 10. Dark mode
 
 **Deferred to Phase 5.** v1.0a ships light mode only.
@@ -1420,6 +1521,7 @@ different layers (feature-axis discharge vs orthogonal-axis budget).
 
 ## Changelog
 
+- **v1.0.7** (2026-06-08) — Added §9.18 (Dialog modal-mode pattern) from hotfix `trip-concierge-nwk`. Codifies the imperative `useEffect`-driven `showModal`/`close` pattern with explicit footgun callout (declarative `<dialog open>` breaks modal mode in real browsers — slice 4.5c + 4.6 shipped 3 dialogs with the bug). Includes test-infrastructure note: `vitest.setup.ts` polyfills `HTMLDialogElement.{showModal, close}` to mirror real-browser `InvalidStateError`, plus required regression assertion on spy `mock.results[0].type`. Banked observation: workarounds for test infrastructure should also be tested at the level they bypass.
 - **v1.0.6** (2026-06-08) — Added §9.17 (Block-action cluster) from slice 4.6. Pattern-only spec for the composable bottom-right block-scoped action surface; v1.0a instances are `<BlockLockToggle />` + `<BlockAlternativeDialog />`. Codifies always-visible state indicators, optimistic-UI + inline-error patterns (no toast primitive scope-creep), and aria-label discipline (name the action, not the state). Additive only — no breaking changes.
 - **v1.0.5** (2026-06-07) — Added §9.16 (Application shell — Header, Landing, NewTripDialog) and §17.13 (Application shell ownership pattern meta) from slice 4.5c. Documents the non-`/trips/[id]`-bound surfaces that frame the product (sticky-glass Header, landing page, two-paths NewTripDialog) plus the methodological learning about non-feature-axis ownership budgets. Additive only — no breaking changes.
 - **v1.0.4** (2026-06-07) — Added §9.15 (Activity panel summary-row pattern) from slice 4d0 Sunday smoke fix. Documents the discriminated-union + branched-render pattern for heterogeneous event panels (PlanHistoryPanel's `callback_summary` vs `AgentFinish` rows). Additive only — no breaking changes.

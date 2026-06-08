@@ -198,4 +198,56 @@ describe("<NewTripDialog /> two-paths restructure (slice 4.5c commit 3.5)", () =
     });
     expect((submitBtn as HTMLButtonElement).disabled).toBe(false);
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Hotfix nwk — modal-mode regression pins (slice 4.5c follow-up,
+  // 2026-06-08). Same root cause as RegenerateDayDialog +
+  // BlockAlternativeDialog — declarative `<dialog open>` threw
+  // InvalidStateError in showModal() and left dialogs non-modal. Map
+  // markers + DayChipTimeline tooltips overlapped the dialog; Escape
+  // didn't close it.
+  // ─────────────────────────────────────────────────────────────────────
+
+  it("calls showModal() and the call RETURNS cleanly (does NOT throw — modal mode required)", async () => {
+    // See regenerate-day-dialog.test.tsx for the rationale — same
+    // hotfix-nwk regression assertion.
+    const showModalSpy = vi.spyOn(HTMLDialogElement.prototype, "showModal");
+
+    const { NewTripDialog } = await import("@/components/new-trip-dialog");
+    render(<NewTripDialog triggerLabel="New trip" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^New trip$/i }));
+
+    await vi.waitFor(() => {
+      expect(showModalSpy).toHaveBeenCalled();
+    });
+    expect(showModalSpy.mock.results[0].type).toBe("return");
+    showModalSpy.mockRestore();
+  });
+
+  it("Escape close (via native `close` event) dismisses the dialog", async () => {
+    const { NewTripDialog } = await import("@/components/new-trip-dialog");
+    render(<NewTripDialog triggerLabel="New trip" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^New trip$/i }));
+    expect(screen.getByText(/Plan a new trip/i)).toBeDefined();
+
+    const dialog = screen.getByRole("dialog");
+    fireEvent(dialog, new Event("close"));
+
+    expect(screen.queryByText(/Plan a new trip/i)).toBeNull();
+  });
+
+  it("Backdrop click (target === dialog element) dismisses the dialog", async () => {
+    const { NewTripDialog } = await import("@/components/new-trip-dialog");
+    render(<NewTripDialog triggerLabel="New trip" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^New trip$/i }));
+    expect(screen.getByText(/Plan a new trip/i)).toBeDefined();
+
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(dialog);
+
+    expect(screen.queryByText(/Plan a new trip/i)).toBeNull();
+  });
 });

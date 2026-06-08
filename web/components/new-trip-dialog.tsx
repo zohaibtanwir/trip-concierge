@@ -50,40 +50,40 @@ export function NewTripDialog({ triggerLabel, userId, defaultOpen = false }: New
   const [activeTab, setActiveTab] = useState<TabKey>("form");
   const [copied, setCopied] = useState(false);
 
-  // If the page mounts with defaultOpen=true (e.g., /trips?new=true),
-  // call showModal() so the dialog has native modal semantics (focus
-  // trap, escape, backdrop) — not just the `open` attribute.
+  // Hotfix-nwk modal-mode pattern (spec §9.18). NO declarative `open`
+  // attribute — useEffect drives showModal/close imperatively so the
+  // dialog enters top-layer modal mode. Replaces both the prior
+  // `defaultOpen` useEffect AND the queueMicrotask inside _openDialog —
+  // one effect covers all open→close transitions including auto-open.
   useEffect(() => {
-    if (defaultOpen) {
-      queueMicrotask(() => {
-        try {
-          dialogRef.current?.showModal();
-        } catch {
-          // jsdom or older browsers.
-        }
-      });
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    if (open && !dlg.open) {
+      try {
+        dlg.showModal();
+      } catch {
+        dlg.setAttribute("open", "");
+      }
+    } else if (!open && dlg.open) {
+      try {
+        dlg.close();
+      } catch {
+        dlg.removeAttribute("open");
+      }
     }
-  }, [defaultOpen]);
+  }, [open]);
 
   function _openDialog() {
     setOpen(true);
-    queueMicrotask(() => {
-      try {
-        dialogRef.current?.showModal();
-      } catch {
-        // jsdom or older browsers.
-      }
-    });
   }
 
   function _closeDialog() {
-    try {
-      dialogRef.current?.close();
-    } catch {
-      // jsdom or older browsers.
-    }
     setOpen(false);
     setCopied(false);
+  }
+
+  function _backdropClick(e: React.MouseEvent<HTMLDialogElement>) {
+    if (e.target === dialogRef.current) _closeDialog();
   }
 
   async function _copyPrompt() {
@@ -110,13 +110,15 @@ export function NewTripDialog({ triggerLabel, userId, defaultOpen = false }: New
       >
         {triggerLabel}
       </button>
-      {open && (
-        <dialog
-          open
-          ref={dialogRef}
-          onClose={() => setOpen(false)}
-          className="rounded-xl bg-surface-container-lowest p-0 border border-outline-variant shadow-2xl backdrop:bg-black/40 backdrop:backdrop-blur-sm m-auto max-w-2xl w-[calc(100%-2rem)]"
-        >
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click has a keyboard
+          equivalent — Escape, wired via onClose; there is no "outside-click" key. */}
+      <dialog
+        ref={dialogRef}
+        onClose={() => setOpen(false)}
+        onClick={_backdropClick}
+        className="rounded-xl bg-surface-container-lowest p-0 border border-outline-variant shadow-2xl backdrop:bg-black/40 backdrop:backdrop-blur-sm m-auto max-w-2xl w-[calc(100%-2rem)]"
+      >
+        {open && (
           <div className="p-6 max-h-[80vh] overflow-y-auto">
             <div className="flex items-start justify-between gap-4 mb-4">
               <h2 className="text-headline-sm text-on-surface">Plan a new trip</h2>
@@ -212,8 +214,8 @@ export function NewTripDialog({ triggerLabel, userId, defaultOpen = false }: New
               </div>
             )}
           </div>
-        </dialog>
-      )}
+        )}
+      </dialog>
     </>
   );
 }

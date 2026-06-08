@@ -93,4 +93,71 @@ describe("<RegenerateDayDialog />", () => {
     }) as HTMLButtonElement;
     expect(submit.disabled).toBe(false);
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Hotfix nwk — modal-mode regression pins (slice 4.6 follow-up,
+  // 2026-06-08). The dialog must enter MODAL mode on open so the browser
+  // top-layer renders above map markers + tooltips, Escape closes via
+  // native cancel→close, and ::backdrop draws the dimmed background.
+  // The previous declarative `<dialog open>` shape threw InvalidStateError
+  // inside showModal() (try/catch swallowed) and left dialogs non-modal.
+  // ─────────────────────────────────────────────────────────────────────
+
+  it("calls showModal() and the call RETURNS cleanly (does NOT throw — modal mode required)", async () => {
+    // The exact regression test for hotfix-nwk. The polyfill in
+    // vitest.setup.ts throws InvalidStateError when showModal is
+    // called on a dialog that already has the `open` attribute —
+    // mirroring real-browser behavior. Asserting mock.results[0].type
+    // === "return" catches the bug: broken code calls showModal but
+    // it throws (mock result.type === "throw"); fixed code calls
+    // showModal cleanly on a dialog without pre-set `open`.
+    const showModalSpy = vi.spyOn(HTMLDialogElement.prototype, "showModal");
+
+    const { RegenerateDayDialog } = await import("@/components/regenerate-day-dialog");
+    render(<RegenerateDayDialog tripId="trip-1" userId="user-abc" dayNumber={2} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Regenerate/i }));
+
+    await vi.waitFor(() => {
+      expect(showModalSpy).toHaveBeenCalled();
+    });
+    // Load-bearing: the call must have RETURNED, not thrown.
+    expect(showModalSpy.mock.results[0].type).toBe("return");
+    showModalSpy.mockRestore();
+  });
+
+  it("Escape close (via native `close` event) dismisses the dialog", async () => {
+    // jsdom doesn't fire the cancel→close keypress chain from Escape;
+    // but the `close` event is the same handler the real Escape path
+    // fires onClose against. Programmatic dispatch tests the sync.
+    const { RegenerateDayDialog } = await import("@/components/regenerate-day-dialog");
+    render(<RegenerateDayDialog tripId="trip-1" userId="user-abc" dayNumber={2} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Regenerate/i }));
+    expect(screen.getByRole("heading", { name: /Regenerate Day 2/i })).toBeDefined();
+
+    const dialog = screen.getByRole("dialog");
+    fireEvent(dialog, new Event("close"));
+
+    expect(screen.queryByRole("heading", { name: /Regenerate Day 2/i })).toBeNull();
+  });
+
+  it("Backdrop click (target === dialog element) dismisses the dialog", async () => {
+    // Clicks on the ::backdrop pseudo-element count as clicks on the
+    // dialog element itself per HTML spec. The content div catches
+    // its own clicks and they don't bubble with target === dialog,
+    // so this only fires on actual backdrop area.
+    const { RegenerateDayDialog } = await import("@/components/regenerate-day-dialog");
+    render(<RegenerateDayDialog tripId="trip-1" userId="user-abc" dayNumber={2} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Regenerate/i }));
+    expect(screen.getByRole("heading", { name: /Regenerate Day 2/i })).toBeDefined();
+
+    const dialog = screen.getByRole("dialog");
+    // fireEvent.click sets target = currentTarget when fired on the
+    // element directly — exactly the backdrop-click condition.
+    fireEvent.click(dialog);
+
+    expect(screen.queryByRole("heading", { name: /Regenerate Day 2/i })).toBeNull();
+  });
 });

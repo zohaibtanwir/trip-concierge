@@ -1,13 +1,16 @@
 /**
- * RegenerateDayDialog — day-scoped regenerate trigger (slice 4.6 commit 2).
+ * RegenerateDayDialog — day-scoped regenerate trigger (slice 4.6 commit 2;
+ * hotfix-nwk modal-mode pattern 2026-06-08).
  *
  * Per Q2 sign-off (option A): button on Day header → modal with
  * optional hint textarea → submit → page navigates to /trips/[id]
  * where slice 4.2's planning-state UX takes over.
  *
- * Native <dialog> + showModal mirror of NewTripDialog (slice 4.5c
- * commit 3): focus trap, escape-to-close, backdrop click — all free
- * from the platform.
+ * Modal-mode pattern (spec §9.18): NO declarative `open` attribute.
+ * useEffect drives showModal/close imperatively so the dialog enters
+ * modal mode (top-layer, ::backdrop, native Escape). The previous
+ * `<dialog open>` shape threw InvalidStateError inside showModal —
+ * caught + swallowed — leaving dialogs non-modal.
  *
  * Lock-preservation copy per Q8 sign-off: explicit "Locked blocks on
  * this day are preserved" so the user understands the regen scope.
@@ -19,7 +22,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { regenerateDayAction } from "@/lib/actions";
 
@@ -37,26 +40,36 @@ export function RegenerateDayDialog({ tripId, userId, dayNumber }: RegenerateDay
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    if (open && !dlg.open) {
+      try {
+        dlg.showModal();
+      } catch {
+        dlg.setAttribute("open", "");
+      }
+    } else if (!open && dlg.open) {
+      try {
+        dlg.close();
+      } catch {
+        dlg.removeAttribute("open");
+      }
+    }
+  }, [open]);
+
   function _openDialog() {
     setOpen(true);
-    queueMicrotask(() => {
-      try {
-        dialogRef.current?.showModal();
-      } catch {
-        // jsdom or older browsers.
-      }
-    });
   }
 
   function _closeDialog() {
-    try {
-      dialogRef.current?.close();
-    } catch {
-      // jsdom or older browsers.
-    }
     setOpen(false);
     setHint("");
     setError(null);
+  }
+
+  function _backdropClick(e: React.MouseEvent<HTMLDialogElement>) {
+    if (e.target === dialogRef.current) _closeDialog();
   }
 
   async function _handleSubmit(e: React.FormEvent) {
@@ -92,13 +105,15 @@ export function RegenerateDayDialog({ tripId, userId, dayNumber }: RegenerateDay
         </span>
         Regenerate
       </button>
-      {open && (
-        <dialog
-          open
-          ref={dialogRef}
-          onClose={() => setOpen(false)}
-          className="rounded-xl bg-surface-container-lowest p-0 border border-outline-variant shadow-2xl backdrop:bg-black/40 backdrop:backdrop-blur-sm m-auto max-w-md w-[calc(100%-2rem)]"
-        >
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click has a keyboard
+          equivalent — Escape, wired via onClose; there is no "outside-click" key. */}
+      <dialog
+        ref={dialogRef}
+        onClose={() => setOpen(false)}
+        onClick={_backdropClick}
+        className="rounded-xl bg-surface-container-lowest p-0 border border-outline-variant shadow-2xl backdrop:bg-black/40 backdrop:backdrop-blur-sm m-auto max-w-md w-[calc(100%-2rem)]"
+      >
+        {open && (
           <form onSubmit={_handleSubmit} className="p-6 max-h-[80vh] overflow-y-auto">
             <div className="flex items-start justify-between gap-4 mb-4">
               <h2 className="text-headline-sm text-on-surface">Regenerate Day {dayNumber}</h2>
@@ -156,8 +171,8 @@ export function RegenerateDayDialog({ tripId, userId, dayNumber }: RegenerateDay
               </p>
             </div>
           </form>
-        </dialog>
-      )}
+        )}
+      </dialog>
     </>
   );
 }

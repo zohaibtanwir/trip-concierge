@@ -427,4 +427,79 @@ describe("<BlockAlternativeDialog />", () => {
     // The error message includes the underlying status / text — loose match.
     expect(screen.getByText(/504|timed out|try again/i)).toBeDefined();
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Hotfix nwk — modal-mode regression pins (slice 4.6 follow-up,
+  // 2026-06-08). Same root cause as RegenerateDayDialog +
+  // NewTripDialog — declarative `<dialog open>` threw InvalidStateError
+  // in showModal() and left dialogs non-modal (z-index conflicts with
+  // map + DayChipTimeline tooltips; Escape didn't close).
+  // ─────────────────────────────────────────────────────────────────────
+
+  it("calls showModal() and the call RETURNS cleanly (does NOT throw — modal mode required)", async () => {
+    // See regenerate-day-dialog.test.tsx for the rationale — same
+    // hotfix-nwk regression assertion.
+    const showModalSpy = vi.spyOn(HTMLDialogElement.prototype, "showModal");
+
+    const { BlockAlternativeDialog } = await import("@/components/block-alternative-dialog");
+    render(
+      <BlockAlternativeDialog
+        tripId="trip-1"
+        userId="user-abc"
+        blockId="block-uuid-1"
+        blockVenueName="Tiger Tiger"
+        dayNumber={2}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Swap|Alternative/i }));
+
+    await vi.waitFor(() => {
+      expect(showModalSpy).toHaveBeenCalled();
+    });
+    expect(showModalSpy.mock.results[0].type).toBe("return");
+    showModalSpy.mockRestore();
+  });
+
+  it("Escape close (via native `close` event) dismisses the dialog", async () => {
+    const { BlockAlternativeDialog } = await import("@/components/block-alternative-dialog");
+    render(
+      <BlockAlternativeDialog
+        tripId="trip-1"
+        userId="user-abc"
+        blockId="block-uuid-1"
+        blockVenueName="Tiger Tiger"
+        dayNumber={2}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Swap|Alternative/i }));
+    expect(screen.getByText(/Tiger Tiger/)).toBeDefined();
+
+    const dialog = screen.getByRole("dialog");
+    fireEvent(dialog, new Event("close"));
+
+    expect(screen.queryByText(/Find alternatives for/i)).toBeNull();
+  });
+
+  it("Backdrop click (target === dialog element) dismisses the dialog", async () => {
+    const { BlockAlternativeDialog } = await import("@/components/block-alternative-dialog");
+    render(
+      <BlockAlternativeDialog
+        tripId="trip-1"
+        userId="user-abc"
+        blockId="block-uuid-1"
+        blockVenueName="Tiger Tiger"
+        dayNumber={2}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Swap|Alternative/i }));
+    expect(screen.getByText(/Tiger Tiger/)).toBeDefined();
+
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(dialog);
+
+    expect(screen.queryByText(/Find alternatives for/i)).toBeNull();
+  });
 });

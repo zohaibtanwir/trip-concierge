@@ -27,7 +27,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { type Alternative, applyAlternativeAction, findAlternativeAction } from "@/lib/actions";
 
@@ -58,25 +58,36 @@ export function BlockAlternativeDialog({
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    // Hotfix-nwk modal-mode pattern (spec §9.18). NO declarative `open`
+    // attribute — useEffect drives showModal/close imperatively so the
+    // dialog enters top-layer modal mode (vs the previous non-modal
+    // shape that conflicted with map markers + DayChipTimeline tooltips
+    // and never responded to Escape).
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    if (open && !dlg.open) {
+      try {
+        dlg.showModal();
+      } catch {
+        dlg.setAttribute("open", "");
+      }
+    } else if (!open && dlg.open) {
+      try {
+        dlg.close();
+      } catch {
+        dlg.removeAttribute("open");
+      }
+    }
+  }, [open]);
+
   function _openDialog() {
-    setOpen(true);
     setState("idle");
     setError(null);
-    queueMicrotask(() => {
-      try {
-        dialogRef.current?.showModal();
-      } catch {
-        // jsdom or older browsers.
-      }
-    });
+    setOpen(true);
   }
 
   function _closeDialog() {
-    try {
-      dialogRef.current?.close();
-    } catch {
-      // jsdom or older browsers.
-    }
     setOpen(false);
     setState("idle");
     setReason("");
@@ -84,6 +95,10 @@ export function BlockAlternativeDialog({
     setSelected(null);
     setApplying(false);
     setError(null);
+  }
+
+  function _backdropClick(e: React.MouseEvent<HTMLDialogElement>) {
+    if (e.target === dialogRef.current) _closeDialog();
   }
 
   async function _handleFind(e: React.FormEvent) {
@@ -157,13 +172,15 @@ export function BlockAlternativeDialog({
         </span>
         Swap this
       </button>
-      {open && (
-        <dialog
-          open
-          ref={dialogRef}
-          onClose={() => setOpen(false)}
-          className="rounded-xl bg-surface-container-lowest p-0 border border-outline-variant shadow-2xl backdrop:bg-black/40 backdrop:backdrop-blur-sm m-auto max-w-lg w-[calc(100%-2rem)]"
-        >
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click has a keyboard
+          equivalent — Escape, wired via onClose; there is no "outside-click" key. */}
+      <dialog
+        ref={dialogRef}
+        onClose={() => setOpen(false)}
+        onClick={_backdropClick}
+        className="rounded-xl bg-surface-container-lowest p-0 border border-outline-variant shadow-2xl backdrop:bg-black/40 backdrop:backdrop-blur-sm m-auto max-w-lg w-[calc(100%-2rem)]"
+      >
+        {open && (
           <div className="p-6 max-h-[80vh] overflow-y-auto">
             <div className="flex items-start justify-between gap-4 mb-4">
               <h2 className="text-headline-sm text-on-surface">
@@ -309,8 +326,8 @@ export function BlockAlternativeDialog({
               </>
             )}
           </div>
-        </dialog>
-      )}
+        )}
+      </dialog>
     </>
   );
 }
