@@ -42,7 +42,7 @@ from arq.connections import RedisSettings
 from arq.jobs import Job, JobStatus
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from trip_agents.schemas import TripRunRequest
 
@@ -168,8 +168,37 @@ def _parse_progress(raw: bytes | str | None) -> ProgressUpdate | None:
 
 
 def _latest_job_run(db: Session, trip_id: uuid.UUID) -> JobRun | None:
+    """Return the JobRun that best represents the trip's agent activity.
+
+    Ordering: richness-first (jsonb_array_length(agent_summary) DESC NULLS
+    LAST), then latest-by-time as tiebreaker. Picks the JobRun with the
+    MOST events — biased toward demo-relevant rich histories.
+
+    Hotfix-3x5 (2026-06-08): previously ordered by created_at DESC alone,
+    which let sparse regenerate_day JobRuns (single-shot LLM outputs with
+    0-1 step events) displace rich plan_trip history (11+ events). The
+    PlanHistoryPanel rendered empty-state on Coorg after a kyh-diagnostic
+    regen even though the original Saturday plan_trip had captured 7
+    AgentFinish + 3 task_completed events.
+
+    Two call sites:
+      - get_plan_status (line ~228): primary consumer; the richness bias
+        is the whole point
+      - "POST /plan when job already complete" guard (line ~297): only
+        checks existence; ordering is semantically irrelevant. Safe to
+        share the helper.
+
+    v1.0b kind-aware selection (trip-concierge-d42) sharpens further by
+    distinguishing original plan_trip from refines/regens.
+    """
     stmt = (
-        select(JobRun).where(JobRun.trip_id == trip_id).order_by(JobRun.created_at.desc()).limit(1)
+        select(JobRun)
+        .where(JobRun.trip_id == trip_id)
+        .order_by(
+            func.jsonb_array_length(JobRun.agent_summary).desc().nullslast(),
+            JobRun.created_at.desc(),
+        )
+        .limit(1)
     )
     return db.execute(stmt).scalar_one_or_none()
 
@@ -188,8 +217,12 @@ async def get_plan_status(trip_id: uuid.UUID, db: SessionDep) -> PlanStatus:
     Resolution order — first match wins:
       1. `trip:{id}:cancelling`         → state="cancelling"
       2. `trip:{id}:active_job` + arq   → state="queued" | "running"
-      3. latest JobRun row              → state="done" | "failed" | "cancelled"
+      3. richest terminal JobRun row    → state="done" | "failed" | "cancelled"
       4. nothing                        → 404
+
+    Step 3 picks the richest JobRun (most agent_summary events) — not the
+    latest by time. See `_latest_job_run` docstring for the hotfix-3x5
+    rationale.
 
     Step 1 must precede step 2 — during a DELETE race, active_job is still
     set briefly. Without the tombstone check, GET would report "running"
