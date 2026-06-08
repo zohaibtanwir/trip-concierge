@@ -382,6 +382,96 @@ def test_status_returns_empty_agent_summary_for_legacy_jobruns(
     assert body["agent_summary"] == []
 
 
+def test_status_returns_richest_agent_summary_when_multiple_jobruns(
+    client: TestClient, db_session: Session
+) -> None:
+    """Hotfix 3x5 (option B+ richest-events-bias, 2026-06-08): when a trip
+    has multiple terminal JobRuns (e.g., original plan_trip + later
+    regenerate_day), the route must return the JobRun with the MOST
+    agent_summary events — not just the latest.
+
+    Regression motivator: Coorg trip had a rich plan_trip JobRun (11 events,
+    Sat) displaced by a subsequent regenerate_day JobRun (1 event, Mon).
+    PlanHistoryPanel rendered empty-state because the latest-by-time
+    semantic picked the sparse regen. Richest-bias preserves demo visibility.
+    """
+    trip = _make_trip(db_session)
+    # Original plan_trip — rich history (11 events).
+    rich_summary = [
+        {"event": "AgentFinish", "timestamp": "2026-06-06T16:12:12Z", "elapsed_ms": 224413},
+        {"event": "AgentFinish", "timestamp": "2026-06-06T16:13:33Z", "elapsed_ms": 305402},
+        {"event": "task_completed", "task_index": 1, "elapsed_ms": 305402},
+        {"event": "AgentFinish", "timestamp": "2026-06-06T16:15:27Z", "elapsed_ms": 419410},
+        {"event": "AgentFinish", "timestamp": "2026-06-06T16:17:00Z", "elapsed_ms": 525000},
+        {"event": "task_completed", "task_index": 2, "elapsed_ms": 525001},
+        {"event": "AgentFinish", "timestamp": "2026-06-06T16:18:00Z", "elapsed_ms": 590000},
+        {"event": "task_completed", "task_index": 3, "elapsed_ms": 590001},
+        {"event": "AgentFinish", "timestamp": "2026-06-06T16:18:30Z", "elapsed_ms": 620000},
+        {"event": "AgentFinish", "timestamp": "2026-06-06T16:18:58Z", "elapsed_ms": 630410},
+        {"event": "callback_summary", "step_callback_count": 7, "task_callback_count": 3},
+    ]
+    _make_job_run(
+        db_session,
+        trip.id,
+        status="succeeded",
+        approved=True,
+        agent_summary=rich_summary,
+        job_id="job-original-plan",
+    )
+    # Later regenerate_day — sparse history (1 event), single-shot LLM
+    # output produced no intermediate ReAct steps.
+    sparse_summary = [
+        {"event": "AgentFinish", "timestamp": "2026-06-08T19:40:26Z", "elapsed_ms": 21600},
+    ]
+    _make_job_run(
+        db_session,
+        trip.id,
+        status="succeeded",
+        approved=None,
+        agent_summary=sparse_summary,
+        job_id="job-later-regen",
+    )
+    pool = _pool_with()
+
+    with patch("app.routes.plan.create_pool", return_value=pool):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "done"
+    # Load-bearing: the rich plan_trip summary wins despite NOT being the
+    # latest by created_at. Richest-events-bias: ORDER BY
+    # jsonb_array_length DESC NULLS LAST, created_at DESC.
+    assert len(body["agent_summary"]) == 11, (
+        f"expected 11-event rich summary; got {len(body['agent_summary'])}-event sparse"
+    )
+    assert body["agent_summary"] == rich_summary
+
+
+def test_status_picks_latest_among_equal_richness(client: TestClient, db_session: Session) -> None:
+    """Tiebreaker check: when two JobRuns have the same event count, the
+    latest (by created_at) wins. Preserves the prior "latest" semantic for
+    the common case where regens produce equal richness.
+    """
+    trip = _make_trip(db_session)
+    summary_a = [{"event": "AgentFinish", "timestamp": "2026-06-06T16:12:12Z", "elapsed_ms": 1000}]
+    summary_b = [{"event": "AgentFinish", "timestamp": "2026-06-08T19:40:26Z", "elapsed_ms": 2000}]
+    _make_job_run(
+        db_session, trip.id, status="succeeded", agent_summary=summary_a, job_id="job-earlier"
+    )
+    _make_job_run(
+        db_session, trip.id, status="succeeded", agent_summary=summary_b, job_id="job-later"
+    )
+    pool = _pool_with()
+
+    with patch("app.routes.plan.create_pool", return_value=pool):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    assert response.status_code == 200
+    # Both have 1 event; latest-by-created_at wins as tiebreaker.
+    assert response.json()["agent_summary"] == summary_b
+
+
 def test_status_returns_cancelling_during_tombstone_race(
     client: TestClient, db_session: Session
 ) -> None:
