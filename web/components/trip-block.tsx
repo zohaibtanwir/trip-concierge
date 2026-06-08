@@ -20,6 +20,7 @@
  */
 
 import { BlockAlternativeDialog } from "@/components/block-alternative-dialog";
+import { BlockLockToggle } from "@/components/block-lock-toggle";
 import type { Block } from "@/lib/backend";
 
 const _ICON_BY_TYPE: Record<string, string> = {
@@ -72,7 +73,12 @@ export function TripBlock({ block, tripId, userId, dayNumber }: TripBlockProps) 
       {block.notes && <p className="mt-2 text-body-md text-on-surface-variant">{block.notes}</p>}
       {canSwap && tripId && userId && dayNumber !== undefined && (
         <div className="mt-3 flex justify-end gap-2">
-          {/* Lock icon placeholder — commit 4 drops <BlockLockToggle /> here. */}
+          <BlockLockToggle
+            tripId={tripId}
+            userId={userId}
+            blockId={block.id}
+            initialLocked={block.locked}
+          />
           <BlockAlternativeDialog
             tripId={tripId}
             userId={userId}

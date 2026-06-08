@@ -9,10 +9,11 @@
  * refine job → page navigates to /trips/[id] where slice 4.2's
  * planning-state UX takes over.
  *
- * 3-state machine: idle | loading | showing. Error state is overlaid
- * on top of the current state (visible via role="alert"). Per Q3-impl
- * sign-off: confirm step deferred to commit 4 polish — apply on the
- * Showing-state card is a single-click commit to the refine.
+ * 4-state machine: idle | loading | showing | confirming. The
+ * confirming step (commit 4 polish, Q-impl-c3c sign-off) gates the
+ * ~10 min re-plan behind an explicit Confirm click. Back-to-options
+ * preserves the alternatives array — no 90s refetch (Q-impl-c4b=A).
+ * Error state is overlaid on top of the current state (role="alert").
  *
  * Native <dialog> + showModal pattern (mirror of RegenerateDayDialog
  * commit 2 + NewTripDialog slice 4.5c commit 3): focus trap, escape,
@@ -38,7 +39,7 @@ interface BlockAlternativeDialogProps {
   dayNumber: number;
 }
 
-type DialogState = "idle" | "loading" | "showing";
+type DialogState = "idle" | "loading" | "showing" | "confirming";
 
 export function BlockAlternativeDialog({
   tripId,
@@ -53,7 +54,8 @@ export function BlockAlternativeDialog({
   const [state, setState] = useState<DialogState>("idle");
   const [reason, setReason] = useState("");
   const [alternatives, setAlternatives] = useState<Alternative[]>([]);
-  const [applying, setApplying] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Alternative | null>(null);
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function _openDialog() {
@@ -79,7 +81,8 @@ export function BlockAlternativeDialog({
     setState("idle");
     setReason("");
     setAlternatives([]);
-    setApplying(null);
+    setSelected(null);
+    setApplying(false);
     setError(null);
   }
 
@@ -103,9 +106,26 @@ export function BlockAlternativeDialog({
     }
   }
 
-  async function _handleApply(alt: Alternative) {
-    if (applying !== null) return;
-    setApplying(alt.venue_name);
+  function _pickAlternative(alt: Alternative) {
+    // Q-impl-c3c sign-off: card Apply click no longer enqueues refine
+    // directly. Transition to confirming surface so the user reviews
+    // the ~10 min commitment before kicking off the crew.
+    setSelected(alt);
+    setError(null);
+    setState("confirming");
+  }
+
+  function _backToOptions() {
+    // Q-impl-c4b=A: preserve alternatives, no refetch. The 90s find
+    // cost is paid once per dialog open.
+    setSelected(null);
+    setError(null);
+    setState("showing");
+  }
+
+  async function _handleConfirm() {
+    if (applying || selected === null) return;
+    setApplying(true);
     setError(null);
     try {
       await applyAlternativeAction({
@@ -113,7 +133,7 @@ export function BlockAlternativeDialog({
         tripId,
         dayNumber,
         oldVenueName: blockVenueName,
-        alternativeVenueName: alt.venue_name,
+        alternativeVenueName: selected.venue_name,
         reason: reason.trim() || undefined,
       });
       _closeDialog();
@@ -121,7 +141,7 @@ export function BlockAlternativeDialog({
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to apply alternative");
-      setApplying(null);
+      setApplying(false);
     }
   }
 
@@ -241,14 +261,50 @@ export function BlockAlternativeDialog({
                       </div>
                       <button
                         type="button"
-                        onClick={() => _handleApply(alt)}
-                        disabled={applying !== null}
-                        className="rounded-md bg-primary px-4 py-1.5 text-label-md text-on-primary hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={() => _pickAlternative(alt)}
+                        className="rounded-md bg-primary px-4 py-1.5 text-label-md text-on-primary hover:bg-primary/90 transition-colors"
                       >
-                        {applying === alt.venue_name ? "Applying…" : "Apply"}
+                        Apply
                       </button>
                     </div>
                   ))}
+                </div>
+              </>
+            )}
+
+            {state === "confirming" && selected !== null && (
+              <>
+                <p className="text-body-md text-on-surface mb-2">
+                  Swap <span className="font-mono">{blockVenueName}</span> for{" "}
+                  <span className="font-mono">{selected.venue_name}</span>?
+                </p>
+                <p className="text-body-sm text-on-surface-variant mb-4">
+                  Confirming will start a full re-plan (~10 min). The crew re-runs end to end so
+                  budgets and other constraints stay consistent. You'll be redirected to the trip
+                  page to watch progress.
+                </p>
+                {error && (
+                  <p className="mb-4 text-body-sm text-error" role="alert">
+                    {error}
+                  </p>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={_backToOptions}
+                    disabled={applying}
+                    className="flex-1 rounded-lg border border-outline-variant bg-surface-container-lowest px-6 py-2.5 text-label-md text-on-surface hover:bg-surface-container-low transition-colors disabled:opacity-50"
+                  >
+                    Back to options
+                  </button>
+                  <button
+                    type="button"
+                    onClick={_handleConfirm}
+                    disabled={applying}
+                    className="flex-1 rounded-lg bg-primary px-6 py-2.5 text-label-md text-on-primary hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {applying ? "Starting…" : "Confirm"}
+                  </button>
                 </div>
               </>
             )}

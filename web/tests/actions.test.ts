@@ -620,3 +620,94 @@ describe("applyAlternativeAction", () => {
     expect(body.refinement_description).toMatch(/Reason: too touristy/i);
   });
 });
+
+describe("setBlockLockAction", () => {
+  // Slice 4.6 commit 4 — block lock toggle Server Action. PATCH the
+  // commit-1 backend route /trips/{id}/blocks/{id} with {locked: bool}.
+  // Metadata-only column write, no enqueue. Returns the updated
+  // BlockRead shape; the dialog uses the returned `locked` to
+  // reconcile optimistic UI on success.
+
+  it("mints token + PATCHes /blocks/{id} with {locked: true}; returns updated Block", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({ mcp_token: "jwt-lock", expires_at: "2026-09-03T00:00:00Z" }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      _jsonResponse({
+        id: "block-uuid-1",
+        order: 1,
+        type: "venue",
+        venue_name: "Tata Coffee Plantation",
+        lat: null,
+        lng: null,
+        start_time: "09:00",
+        duration_minutes: 120,
+        est_cost: "500.00",
+        currency: "INR",
+        locked: true,
+        notes: "",
+        sources: [],
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { setBlockLockAction } = await import("@/lib/actions");
+    const result = await setBlockLockAction({
+      userId: "user-abc",
+      tripId: "trip-1",
+      blockId: "block-uuid-1",
+      locked: true,
+    });
+
+    expect(result.id).toBe("block-uuid-1");
+    expect(result.locked).toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, init] = fetchMock.mock.calls[1];
+    expect(url).toBe("http://test-backend/trips/trip-1/blocks/block-uuid-1");
+    expect(init?.method).toBe("PATCH");
+    expect((init?.headers as Record<string, string>)["x-tc-token"]).toBe("jwt-lock");
+    expect(JSON.parse(init?.body as string)).toEqual({ locked: true });
+  });
+
+  it("sends {locked: false} when unlocking", async () => {
+    // Both directions of the toggle hit the same route; only the body
+    // differs. Test pins the body shape for the unlock direction.
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ id: "b-1", locked: false }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { setBlockLockAction } = await import("@/lib/actions");
+    await setBlockLockAction({
+      userId: "user-abc",
+      tripId: "trip-1",
+      blockId: "b-1",
+      locked: false,
+    });
+
+    const [, init] = fetchMock.mock.calls[1];
+    expect(JSON.parse(init?.body as string)).toEqual({ locked: false });
+  });
+
+  it("throws BackendError on 404 (block not found on trip)", async () => {
+    // Backend returns 404 for both missing-trip and missing-block (per
+    // slice 3.4a precedent — avoid leaking trip ownership through
+    // 403 vs 404 differentiation). The action propagates the 404.
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(_jsonResponse({ mcp_token: "jwt", expires_at: "x" }));
+    fetchMock.mockResolvedValueOnce(new Response("block not found", { status: 404 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { setBlockLockAction } = await import("@/lib/actions");
+    await expect(
+      setBlockLockAction({
+        userId: "user-abc",
+        tripId: "trip-1",
+        blockId: "missing-block",
+        locked: true,
+      }),
+    ).rejects.toThrow(/404/);
+  });
+});

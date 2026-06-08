@@ -229,11 +229,107 @@ describe("<BlockAlternativeDialog />", () => {
     expect(applyBtns.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("clicking Apply on an alternative fires applyAlternativeAction with the right tuple", async () => {
-    // Q4=A wire: apply-via-refine. Test asserts the action receives
-    // (tripId, dayNumber, oldVenueName, alternativeVenueName) so the
-    // synthesis (covered in actions.test.ts) can build the right
-    // refinement_description.
+  it("clicking Apply on a card transitions SHOWING → CONFIRMING (does NOT fire applyAlternativeAction directly)", async () => {
+    // Slice 4.6 commit 4 — Q-impl-c3c confirm-step polish. Apply on a
+    // card no longer enqueues refine directly; it transitions to the
+    // CONFIRMING surface where the user reviews + confirms the ~10
+    // min re-plan commitment.
+    const { findAlternativeAction, applyAlternativeAction } = await import("@/lib/actions");
+    (findAlternativeAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      _ALTERNATIVES_FIXTURE,
+    );
+
+    const { BlockAlternativeDialog } = await import("@/components/block-alternative-dialog");
+    render(
+      <BlockAlternativeDialog
+        tripId="trip-1"
+        userId="user-abc"
+        blockId="block-uuid-1"
+        blockVenueName="Tiger Tiger"
+        dayNumber={2}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Swap|Alternative/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Find alternatives|Find|Search/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Tadiandamol Trek Base/)).toBeDefined();
+    });
+
+    // Pick the FIRST alternative.
+    const applyBtns = screen.getAllByRole("button", { name: /Apply|Use this|Swap to/i });
+    fireEvent.click(applyBtns[0]);
+
+    // CONFIRMING surface: shows ~10 min disclosure + Confirm + Back-to-options.
+    await waitFor(() => {
+      expect(screen.getByText(/10 ?min|10 minute|~10/i)).toBeDefined();
+    });
+    expect(screen.getByRole("button", { name: /Confirm|Yes|Start re-plan/i })).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: /Back to options|Pick another|Cancel and pick/i }),
+    ).toBeDefined();
+
+    // CRITICAL: applyAlternativeAction was NOT fired yet. The user
+    // must click Confirm to commit; just picking an alternative is
+    // intentional preview.
+    expect(applyAlternativeAction).not.toHaveBeenCalled();
+  });
+
+  it("CONFIRMING → SHOWING via Back-to-options preserves alternatives (no refetch)", async () => {
+    // Q-impl-c4b sign-off (option A): the alternatives array is
+    // preserved when the user backs out. Re-running the 90s find is
+    // a bad UX; cached state lives in the dialog.
+    const { findAlternativeAction } = await import("@/lib/actions");
+    (findAlternativeAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      _ALTERNATIVES_FIXTURE,
+    );
+
+    const { BlockAlternativeDialog } = await import("@/components/block-alternative-dialog");
+    render(
+      <BlockAlternativeDialog
+        tripId="trip-1"
+        userId="user-abc"
+        blockId="block-uuid-1"
+        blockVenueName="Tiger Tiger"
+        dayNumber={2}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Swap|Alternative/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Find alternatives|Find|Search/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Tadiandamol Trek Base/)).toBeDefined();
+    });
+
+    // Pick first → CONFIRMING.
+    fireEvent.click(screen.getAllByRole("button", { name: /Apply|Use this|Swap to/i })[0]);
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Back to options|Pick another|Cancel and pick/i }),
+      ).toBeDefined();
+    });
+
+    // Back to options.
+    fireEvent.click(
+      screen.getByRole("button", { name: /Back to options|Pick another|Cancel and pick/i }),
+    );
+
+    // SHOWING surface restored — all 3 cards still rendered.
+    expect(screen.getByText(/Tadiandamol Trek Base/)).toBeDefined();
+    expect(screen.getByText(/Raja's Seat Sunset Point/)).toBeDefined();
+    expect(screen.getByText(/Abbey Falls Trail/)).toBeDefined();
+
+    // CRITICAL: findAlternativeAction was called exactly ONCE (no
+    // refetch on Back-to-options). The 90s wait is not re-paid.
+    expect(findAlternativeAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("CONFIRMING → Confirm click fires applyAlternativeAction with the right tuple", async () => {
+    // The actual commit point. applyAlternativeAction only fires on
+    // explicit Confirm; the synthesis test in actions.test.ts covers
+    // the refinement_description shape.
     const { findAlternativeAction, applyAlternativeAction } = await import("@/lib/actions");
     (findAlternativeAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       _ALTERNATIVES_FIXTURE,
@@ -260,10 +356,14 @@ describe("<BlockAlternativeDialog />", () => {
     await waitFor(() => {
       expect(screen.getByText(/Tadiandamol Trek Base/)).toBeDefined();
     });
+    fireEvent.click(screen.getAllByRole("button", { name: /Apply|Use this|Swap to/i })[0]);
 
-    // Pick the FIRST alternative by clicking the first apply button.
-    const applyBtns = screen.getAllByRole("button", { name: /Apply|Use this|Swap to/i });
-    fireEvent.click(applyBtns[0]);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Confirm|Yes|Start re-plan/i })).toBeDefined();
+    });
+
+    // Confirm.
+    fireEvent.click(screen.getByRole("button", { name: /Confirm|Yes|Start re-plan/i }));
 
     await waitFor(() => {
       expect(applyAlternativeAction).toHaveBeenCalledWith(

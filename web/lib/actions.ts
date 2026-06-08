@@ -13,7 +13,7 @@
 
 "use server";
 
-import { BackendError, mintMcpToken, type PlanStatus } from "@/lib/backend";
+import { BackendError, type Block, mintMcpToken, type PlanStatus } from "@/lib/backend";
 import { env } from "@/lib/env";
 
 /**
@@ -434,4 +434,48 @@ export async function applyAlternativeAction({
     );
   }
   return (await response.json()) as ApplyAlternativeResult;
+}
+
+/**
+ * setBlockLockAction — invoked by <BlockLockToggle /> on the trip
+ * detail page (slice 4.6 commit 4). Consumes the slice-4.6 commit-1
+ * route PATCH /trips/{tripId}/blocks/{blockId} with body {locked}.
+ *
+ * Metadata-only column write — no Redis touch, no arq enqueue. The
+ * regenerate_day worker reads the locked snapshot at dispatch time
+ * per slice 3.3's hard contract; toggling during in-flight regen is
+ * observed at the next dispatch. No 409 guard at the backend.
+ *
+ * Returns the full BlockRead so the optimistic UI can reconcile
+ * against the server's canonical state. Per Q-impl-c4a fallback (no
+ * toast primitive in project) the dialog surface handles rejection
+ * via an inline error badge that auto-clears after 3 seconds.
+ */
+export async function setBlockLockAction({
+  userId,
+  tripId,
+  blockId,
+  locked,
+}: {
+  userId: string;
+  tripId: string;
+  blockId: string;
+  locked: boolean;
+}): Promise<Block> {
+  const { mcp_token } = await mintMcpToken({ userId });
+  const response = await fetch(`${env.BACKEND_URL}/trips/${tripId}/blocks/${blockId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "x-tc-token": mcp_token,
+    },
+    body: JSON.stringify({ locked }),
+  });
+  if (!response.ok) {
+    throw new BackendError(
+      response.status,
+      `setBlockLockAction HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  return (await response.json()) as Block;
 }
