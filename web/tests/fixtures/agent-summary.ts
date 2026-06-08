@@ -24,21 +24,33 @@
 
 import type { AgentSummaryRow } from "@/lib/backend";
 
-/** A single AgentFinish event — the per-agent completion record. */
+/** A single AgentFinish event — per-agent reasoning step record.
+ *
+ * Path B (hotfix-kyh reframe 2026-06-08): includes agent_role so the
+ * row renders "Travel Researcher" instead of literal "AgentFinish".
+ */
 export const AGENT_FINISH_FIXTURE: AgentSummaryRow = {
   event: "AgentFinish",
   timestamp: "2026-06-06T16:12:12.550713+00:00",
   elapsed_ms: 224413,
   output_excerpt: "Great — I now have the geographic context to anchor the cost validation.",
+  agent_role: "Travel Researcher",
 };
 
-/** A single task_completed event — CrewAI hook fired alongside AgentFinish. */
+/** A single task_completed event — CrewAI agent-completion marker.
+ *
+ * Path B: no longer filtered out by the renderer; surfaces with
+ * check_circle icon + agent_role title. Primary visibility surface
+ * when step_callback doesn't fire (the common case under CrewAI 1.14.5
+ * with single-shot agent outputs).
+ */
 export const TASK_COMPLETED_FIXTURE: AgentSummaryRow = {
   event: "task_completed",
   timestamp: "2026-06-06T16:13:33.541264+00:00",
   elapsed_ms: 305402,
   task_index: 1,
   output_excerpt: "Now I have all the information I need to compile the complete response.",
+  agent_role: "Local Coorg Expert",
 };
 
 /**

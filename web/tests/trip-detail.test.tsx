@@ -218,11 +218,12 @@ describe("/trips/[id] detail page", () => {
 
     // PlanHistoryPanel header surface.
     expect(screen.getByText(/how this plan was made/i)).toBeDefined();
-    // Event label visible. The panel surfaces "AgentFinish" + time +
-    // duration per Option C from the slice 4d0 smoke triage dialogue —
-    // agent_role enrichment to show "Researcher" instead of "AgentFinish"
-    // is tracked as a separate P2 backend follow-up.
-    expect(screen.getByText(/AgentFinish/)).toBeDefined();
+    // Event label visible. Path B (hotfix-kyh reframe 2026-06-08):
+    // agent_role enrichment landed — the panel now surfaces the role
+    // string ("Travel Researcher") as the row title, not the literal
+    // event-class name. AGENT_FINISH_FIXTURE has agent_role="Travel
+    // Researcher" per the fixture update. Discharges trip-concierge-nhm.
+    expect(screen.getByText(/Travel Researcher/)).toBeDefined();
   });
 
   it("renders the no_job fallback section when planStatus.state === 'no_job'", async () => {
