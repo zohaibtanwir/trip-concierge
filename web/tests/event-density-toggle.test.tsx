@@ -53,4 +53,20 @@ describe("<EventDensityToggle />", () => {
     expect(onChange).toHaveBeenCalledWith("all");
     expect(sessionStorage.getItem("theater-density")).toBe("all");
   });
+
+  it("renders nothing during SSR — avoids hydration mismatch (hotfix-0pj)", async () => {
+    // sessionStorage is unavailable on the server. Reading it in the
+    // useState initializer caused a hydration mismatch when the client
+    // first render returned a different value than the server's default.
+    // Mounted-flag pattern: render null until useEffect fires post-mount.
+    // The SSR render path (renderToString) verifies the server-side output
+    // is empty — guaranteeing client first render matches.
+    const { renderToString } = await import("react-dom/server");
+    const { EventDensityToggle } = await import("@/components/event-density-toggle");
+    const onChange = vi.fn();
+    const html = renderToString(<EventDensityToggle onChange={onChange} />);
+    // Empty output: no Major/All buttons, no role="group" container,
+    // nothing for the server-vs-client diff to catch on.
+    expect(html).toBe("");
+  });
 });

@@ -13,6 +13,14 @@
  * preference; localStorage would carry across sessions which feels
  * over-sticky.
  *
+ * Mounted-flag pattern (hotfix-0pj): renders null until the mount
+ * useEffect has fired. sessionStorage is unavailable during SSR; the
+ * previous useState-initializer pattern caused a hydration mismatch
+ * when the client-first-render read sessionStorage and disagreed with
+ * the server's default. Now both server AND client first render return
+ * null; the real UI appears after mount with hydrated state. Brief
+ * flicker is acceptable for a polish element.
+ *
  * R6 confirmation: cards always show full state. This toggle ONLY
  * affects the LiveEventLog below the cards.
  */
@@ -36,19 +44,22 @@ function _readStoredMode(): Mode {
 }
 
 export function EventDensityToggle({ onChange }: EventDensityToggleProps) {
-  // useState initializer reads sessionStorage on first render (or
-  // defaults to "major" during SSR). One useEffect on mount fires the
-  // initial onChange so the parent receives the hydrated value;
-  // subsequent _handleChange calls fire onChange directly.
-  const [mode, setMode] = useState<Mode>(() => _readStoredMode());
+  // Mounted-flag pattern: mounted=false during SSR + first client render,
+  // both of which return null. After mount, useEffect reads sessionStorage,
+  // flips mounted=true, calls onChange. From then on subsequent
+  // _handleChange calls update local state + sessionStorage + onChange.
+  const [mounted, setMounted] = useState(false);
+  const [mode, setMode] = useState<Mode>("major");
 
-  // Intentional mount-only fire to surface the hydrated initial mode to the parent.
-  // Including `mode`/`onChange` in deps would re-fire on parent re-render (new
-  // onChange identity), which is wrong — _handleChange owns subsequent changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only by design
   useEffect(() => {
-    onChange(mode);
+    const stored = _readStoredMode();
+    setMode(stored);
+    setMounted(true);
+    onChange(stored);
   }, []);
+
+  if (!mounted) return null;
 
   function _handleChange(next: Mode) {
     if (next === mode) return;
