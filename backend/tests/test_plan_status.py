@@ -23,6 +23,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -88,11 +89,17 @@ def _pool_with(
     cancelling: bytes | None = None,
     active_job: bytes | None = None,
     progress: bytes | None = None,
+    events: list[bytes] | None = None,
 ) -> AsyncMock:
-    """AsyncMock pool whose `.get` returns per-key fixtures by key suffix.
+    """AsyncMock pool whose `.get` returns per-key fixtures by key suffix
+    and whose `.lrange` returns the events list (slice 4.7-theater 249).
 
     We match by suffix so the test doesn't need to know the trip_id to set
     up the mock. The route always uses `trip:{id}:<suffix>`.
+
+    `events` is the Redis-list-backed in-flight event stream the theater
+    UI consumes. List semantics: newest-first per LPUSH; route LRANGEs
+    them and surfaces as `events_in_flight` in PlanStatus.
     """
     pool = AsyncMock()
     by_suffix: dict[str, bytes | None] = {
@@ -108,7 +115,14 @@ def _pool_with(
                 return value
         return None
 
+    async def fake_lrange(key: str | bytes, start: int, stop: int) -> list[bytes]:
+        k = key.decode() if isinstance(key, bytes) else key
+        if k.endswith(":events"):
+            return events or []
+        return []
+
     pool.get.side_effect = fake_get
+    pool.lrange.side_effect = fake_lrange
     pool.delete.return_value = 1
     pool.setex.return_value = True
     return pool
@@ -592,3 +606,151 @@ def test_delete_is_idempotent_during_cancelling_window(
 
     assert response.status_code == 204
     assert not abort_mock.called, "no active_job to abort on the retry — abort must not fire"
+
+
+# ---------------------------------------------------------------------------
+# Slice 4.7-theater (trip-concierge-249) — in-flight events_in_flight field
+# ---------------------------------------------------------------------------
+#
+# Theater UI consumes a Redis-list-backed stream of in-flight crew events.
+# Worker LPUSHes to `trip:{id}:events` from both step_cb and task_cb;
+# /plan/status LRANGEs the list and returns it as `events_in_flight`.
+# Wire layer: explicit running-vs-terminal distinction (events_in_flight
+# during {queued, running, cancelling}; agent_summary at terminal).
+
+
+def _event_bytes(events: list[dict[str, Any]]) -> list[bytes]:
+    """Helper: convert event dicts into the bytes shape Redis returns."""
+    import json as _json
+
+    return [_json.dumps(e).encode() for e in events]
+
+
+def test_status_returns_events_in_flight_during_running_state(
+    client: TestClient, db_session: Session
+) -> None:
+    """Theater UI primary signal: during running state, the route MUST
+    surface the in-flight event stream from Redis. Without this field,
+    the theater can't render agent activity as it happens — which is the
+    entire point of the slice.
+    """
+    trip = _make_trip(db_session)
+    in_flight = [
+        {
+            "event": "task_completed",
+            "task_index": 1,
+            "agent_role": "Travel Researcher",
+            "elapsed_ms": 312000,
+            "timestamp": "2026-06-09T10:05:00+00:00",
+        },
+        {
+            "event": "AgentFinish",
+            "agent_role": "Local Coorg Expert",
+            "elapsed_ms": 425000,
+            "timestamp": "2026-06-09T10:07:05+00:00",
+        },
+    ]
+    pool = _pool_with(active_job=b"job-running-1", events=_event_bytes(in_flight))
+
+    with (
+        patch("app.routes.plan.create_pool", return_value=pool),
+        patch("app.routes.plan.Job", _mock_job(JobStatus.in_progress)),
+    ):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["state"] == "running"
+    # Load-bearing: the new field MUST be present and populated.
+    assert body["events_in_flight"] == in_flight, (
+        f"expected events_in_flight to mirror Redis list; got {body.get('events_in_flight')}"
+    )
+
+
+def test_status_returns_events_in_flight_during_queued_state(
+    client: TestClient, db_session: Session
+) -> None:
+    """Queued state: rare to have events yet (worker hasn't started the crew
+    kickoff), but the route shape must still return the field (empty list).
+    The theater UI distinguishes 'no events yet' from 'old data' via this
+    explicit empty-vs-present semantic.
+    """
+    trip = _make_trip(db_session)
+    pool = _pool_with(active_job=b"job-queued-1", events=[])
+
+    with (
+        patch("app.routes.plan.create_pool", return_value=pool),
+        patch("app.routes.plan.Job", _mock_job(JobStatus.queued)),
+    ):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["state"] == "queued"
+    # Empty list, not null — empty array tells the theater "no events
+    # yet" vs null which historically meant "this is a terminal state."
+    assert body["events_in_flight"] == [], (
+        f"expected empty events_in_flight; got {body.get('events_in_flight')}"
+    )
+
+
+def test_status_events_in_flight_preserves_lpush_newest_first_order(
+    client: TestClient, db_session: Session
+) -> None:
+    """Wire-order semantic: worker LPUSHes (newest at index 0). The route
+    LRANGEs 0..N which returns newest-first. Theater UI consumes in that
+    order — the live event log shows latest at top, scrolling old events
+    down. Reversing here would silently flip the demo narrative direction.
+    """
+    trip = _make_trip(db_session)
+    # In Redis after 3 LPUSHes ([oldest, middle, newest]), LRANGE 0 N
+    # returns [newest, middle, oldest]. Simulate that shape directly.
+    redis_list_order = [
+        {"event": "task_completed", "task_index": 3, "agent_role": "Logistics Planner"},
+        {"event": "task_completed", "task_index": 2, "agent_role": "Local Coorg Expert"},
+        {"event": "task_completed", "task_index": 1, "agent_role": "Travel Researcher"},
+    ]
+    pool = _pool_with(active_job=b"job-running-1", events=_event_bytes(redis_list_order))
+
+    with (
+        patch("app.routes.plan.create_pool", return_value=pool),
+        patch("app.routes.plan.Job", _mock_job(JobStatus.in_progress)),
+    ):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    body = response.json()
+    # task_index 3 (Logistics — most recent) appears first in the wire.
+    assert body["events_in_flight"][0]["task_index"] == 3
+    assert body["events_in_flight"][-1]["task_index"] == 1
+
+
+def test_status_events_in_flight_null_at_terminal_state(
+    client: TestClient, db_session: Session
+) -> None:
+    """At terminal state, agent_summary is the source of truth (richest
+    JobRun per hotfix-3x5). events_in_flight is meaningless — Redis
+    list has either expired or been cleaned. The field must be null
+    (not empty list) to signal "the run is over; read agent_summary."
+    """
+    trip = _make_trip(db_session)
+    _make_job_run(
+        db_session,
+        trip.id,
+        status="succeeded",
+        approved=True,
+        agent_summary=_SAMPLE_AGENT_SUMMARY,
+    )
+    pool = _pool_with()  # no active_job; nothing in events list either
+
+    with patch("app.routes.plan.create_pool", return_value=pool):
+        response = client.get(f"/trips/{trip.id}/plan/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "done"
+    # Load-bearing distinction: events_in_flight is null at terminal,
+    # NOT empty list. Theater UI uses null-vs-empty to know "is the run
+    # active?" without re-deriving from state.
+    assert body["events_in_flight"] is None, (
+        f"expected null events_in_flight at terminal; got {body.get('events_in_flight')!r}"
+    )

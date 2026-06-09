@@ -129,7 +129,37 @@ def _make_callbacks(
     events: list[dict[str, Any]] = []
     counters: dict[str, int] = {"step": 0, "task": 0}
     started = time.monotonic()
-    progress_key = f"trip:{trip_id}:progress" if (redis is not None and trip_id and loop) else None
+    redis_wired = redis is not None and trip_id and loop
+    progress_key = f"trip:{trip_id}:progress" if redis_wired else None
+    # Slice 4.7-theater (trip-concierge-249) — events list key. Same
+    # gating as progress_key; LPUSHed by both step_cb and task_cb so
+    # the theater UI has a full event timeline (not just the latest
+    # single-key progress shape).
+    events_key = f"trip:{trip_id}:events" if redis_wired else None
+
+    def _lpush_event(entry: dict[str, Any]) -> None:
+        """LPUSH the entry to the events list, LTRIM cap, refresh TTL.
+
+        Best-effort like the existing progress write — failures are
+        logged at debug and never bubble. The theater UI degrades to
+        the previous-event view if the most recent write is missed;
+        polling will pick up the next event regardless.
+        """
+        if events_key is None:
+            return
+        try:
+            assert loop is not None and redis is not None
+            payload = json.dumps(entry)
+
+            async def _write() -> None:
+                assert redis is not None and events_key is not None
+                await redis.lpush(events_key, payload)
+                await redis.ltrim(events_key, 0, _EVENTS_LIST_CAP - 1)
+                await redis.expire(events_key, _EVENTS_LIST_TTL_SECONDS)
+
+            asyncio.run_coroutine_threadsafe(_write(), loop)
+        except Exception:
+            logger.debug("plan.events_lpush.skipped", exc_info=True)
 
     def step_cb(step: Any) -> None:
         counters["step"] += 1
@@ -152,6 +182,10 @@ def _make_callbacks(
             text = str(output)
             entry["output_excerpt"] = text[:200]
         events.append(entry)
+        # Slice 4.7-theater: theater event-list write. Fires on every
+        # step regardless of agent_role (theater renders event-name
+        # fallback for legacy/test-fake steps per Path B precedent).
+        _lpush_event(entry)
 
         if progress_key and agent_role:
             pass_num = getattr(step, "pass_num", None) or 1
@@ -205,6 +239,11 @@ def _make_callbacks(
         if agent_role:
             entry["agent_role"] = agent_role
         events.append(entry)
+        # Slice 4.7-theater: NEW wire — task_cb was previously Redis-
+        # silent. Task events are the load-bearing visibility surface
+        # when step_cb fires 0 times under CrewAI single-shot outputs
+        # (per kyh-reframe diagnosis).
+        _lpush_event(entry)
 
     return events, step_cb, task_cb, counters
 
@@ -228,6 +267,15 @@ def _append_callback_summary(events: list[dict[str, Any]], counters: dict[str, i
 # Progress key TTL — short. The status endpoint reads it best-effort; a
 # worker crash should not leave stale progress visible for long.
 _PROGRESS_TTL_SECONDS = 120
+
+# Slice 4.7-theater (trip-concierge-249) — in-flight events list.
+# Each step_cb + task_cb fire LPUSHes a serialized event dict to
+# `trip:{id}:events`. The list is capped at 50 (covers plan_trip's
+# ~10-event arc + refine_trip's ~5-10 events with headroom); LTRIM
+# trims older entries, EXPIRE refreshes the TTL on every write so the
+# list lives as long as the run does. Cleaned up at terminal state.
+_EVENTS_LIST_CAP = 50
+_EVENTS_LIST_TTL_SECONDS = 1800  # 30 min — long enough for plan_trip + retries
 
 
 async def plan_trip(
@@ -431,7 +479,16 @@ async def _cleanup_redis_keys(redis: Any | None, trip_id: str, *, include_cancel
     """
     if redis is None:
         return
-    keys = [f"trip:{trip_id}:active_job", f"trip:{trip_id}:progress"]
+    keys = [
+        f"trip:{trip_id}:active_job",
+        f"trip:{trip_id}:progress",
+        # Slice 4.7-theater (249): immediate cleanup of the events list
+        # per Q-impl-249-g sign-off. Consistent with existing keys'
+        # delete-immediately semantic. Polling clients race-tolerant:
+        # the state-check stops polling on terminal regardless of
+        # whether events list is empty or absent.
+        f"trip:{trip_id}:events",
+    ]
     if include_cancelling:
         keys.append(f"trip:{trip_id}:cancelling")
     with contextlib.suppress(Exception):

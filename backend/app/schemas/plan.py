@@ -80,3 +80,12 @@ class PlanStatus(BaseModel):
     # carries at least {agent, step, duration_ms}; per-step reasoning is
     # tracked separately for future enrichment (trip-concierge-gco).
     agent_summary: list[dict[str, Any]] | None = None
+    # Slice 4.7-theater (trip-concierge-249) — in-flight event stream
+    # consumed by the live planning theater UI. Populated from a Redis
+    # list (`trip:{id}:events`) written by worker step_cb + task_cb on
+    # non-terminal states (queued/running/cancelling); None at terminal
+    # states (theater reads agent_summary instead). Empty list = "run
+    # active but no events yet" — distinct from None which means "run
+    # is over." The theater frontend uses null-vs-empty to know whether
+    # to keep polling.
+    events_in_flight: list[dict[str, Any]] | None = None

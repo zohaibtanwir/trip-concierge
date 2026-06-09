@@ -167,6 +167,35 @@ def _parse_progress(raw: bytes | str | None) -> ProgressUpdate | None:
         return None
 
 
+async def _read_events_in_flight(redis: Any, trip_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Read the worker-LPUSHed event stream for the theater UI.
+
+    Slice 4.7-theater (trip-concierge-249). The list lives at
+    `trip:{id}:events` with a 30-min TTL and a 50-event LTRIM cap;
+    LRANGE 0..-1 returns the full survivors in LPUSH newest-first
+    order. Tolerant: partial / malformed entries are skipped silently,
+    not surfaced as 500s — theater observability isn't load-bearing
+    for the request's correctness.
+
+    Returns empty list when:
+      - Redis has no entries (worker just enqueued, no callbacks yet)
+      - All entries fail to parse (extreme edge case)
+    """
+    try:
+        raw_entries = await redis.lrange(f"trip:{trip_id}:events", 0, -1)
+    except Exception:
+        return []
+    parsed: list[dict[str, Any]] = []
+    for raw in raw_entries:
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(event, dict):
+            parsed.append(event)
+    return parsed
+
+
 def _latest_job_run(db: Session, trip_id: uuid.UUID) -> JobRun | None:
     """Return the JobRun that best represents the trip's agent activity.
 
@@ -233,7 +262,15 @@ async def get_plan_status(trip_id: uuid.UUID, db: SessionDep) -> PlanStatus:
 
     cancelling = await redis.get(f"trip:{trip_id}:cancelling")
     if cancelling is not None:
-        return PlanStatus(state="cancelling", trip_url=f"/trips/{trip_id}")
+        # Slice 4.7-theater (249): theater UI keeps showing the partial
+        # event timeline during the cancelling window so the user sees
+        # what was captured before the cancel landed.
+        events_in_flight = await _read_events_in_flight(redis, trip_id)
+        return PlanStatus(
+            state="cancelling",
+            trip_url=f"/trips/{trip_id}",
+            events_in_flight=events_in_flight,
+        )
 
     active = decode_active_value(await redis.get(f"trip:{trip_id}:active_job"))
     if active is not None:
@@ -243,12 +280,18 @@ async def get_plan_status(trip_id: uuid.UUID, db: SessionDep) -> PlanStatus:
         )
         arq_status = await Job(active_job, redis=redis).status()
         progress_raw = await redis.get(f"trip:{trip_id}:progress")
+        # Slice 4.7-theater (249): in-flight event stream for the
+        # planning theater UI. Empty list = "run is active but worker
+        # hasn't fired any callbacks yet"; non-empty = LPUSH newest-
+        # first order from step_cb + task_cb.
+        events_in_flight = await _read_events_in_flight(redis, trip_id)
         if arq_status == JobStatus.queued:
             return PlanStatus(
                 state="queued",
                 job_id=active_job,
                 kind=kind_typed,
                 trip_url=f"/trips/{trip_id}",
+                events_in_flight=events_in_flight,
             )
         return PlanStatus(
             state="running",
@@ -256,6 +299,7 @@ async def get_plan_status(trip_id: uuid.UUID, db: SessionDep) -> PlanStatus:
             kind=kind_typed,
             progress_message=_parse_progress(progress_raw),
             trip_url=f"/trips/{trip_id}",
+            events_in_flight=events_in_flight,
         )
 
     job_run = _latest_job_run(db, trip_id)

@@ -21,9 +21,11 @@ guard.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -645,3 +647,126 @@ async def test_regenerate_day_fatal_error_writes_failed_with_kind_regen() -> Non
     assert len(added) == 1
     assert added[0].kind == "regen"
     assert added[0].status == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Slice 4.7-theater (trip-concierge-249) — events list Redis wire
+# ---------------------------------------------------------------------------
+#
+# step_cb + task_cb LPUSH serialized event dicts to `trip:{id}:events`
+# so the theater UI can render in-flight crew activity via polled
+# /plan/status. Replaces the single-key `trip:{id}:progress` write's
+# one-event-visible limitation with a 50-item rolling timeline. LTRIM
+# caps at 50; EXPIRE refreshes the 30-min TTL on each write.
+#
+# These tests exercise _make_callbacks in isolation — the existing
+# plan_trip integration tests already cover the in-memory `events`
+# list accumulation path; this slice's added behavior is the
+# Redis-list write, which is best tested at the callback layer.
+
+
+async def _drain_scheduled_coros(captured: list) -> None:
+    """Await each captured coroutine in order so the mocked Redis records
+    its calls. Mirrors what asyncio.run_coroutine_threadsafe would do on
+    the real loop, minus the cross-thread bridging.
+    """
+    for coro in captured:
+        await coro
+
+
+@pytest.mark.asyncio
+async def test_make_callbacks_step_cb_lpushes_to_events_list() -> None:
+    """step_cb LPUSHes the serialized event to trip:{id}:events with cap +
+    TTL refresh. Without this, the theater UI sees only the latest single-
+    key progress (the pre-249 wire) and can't render a timeline.
+    """
+    redis = AsyncMock()
+    loop = asyncio.get_event_loop()
+    captured_coros: list = []
+
+    def _capture_schedule(coro: Any, _loop: Any) -> Any:
+        captured_coros.append(coro)
+        return MagicMock()
+
+    _events, step_cb, _task_cb, _counters = worker._make_callbacks(
+        redis=redis, trip_id="trip-249", loop=loop
+    )
+
+    with patch("asyncio.run_coroutine_threadsafe", side_effect=_capture_schedule):
+        step = _FakeStep("Travel Researcher", "found candidates")
+        step_cb(step)
+
+    await _drain_scheduled_coros(captured_coros)
+
+    # Load-bearing: LPUSH to the events list key + correct payload shape.
+    assert redis.lpush.called, "step_cb must LPUSH to the events list"
+    key, payload_bytes = redis.lpush.call_args[0]
+    assert key == "trip:trip-249:events", f"unexpected key {key!r}"
+    payload = json.loads(payload_bytes)
+    assert payload["agent_role"] == "Travel Researcher"
+    # Cap: LTRIM 0 49 keeps the newest 50 entries (we LPUSH so newest at idx 0).
+    redis.ltrim.assert_called_with("trip:trip-249:events", 0, 49)
+    # TTL refresh: 30 min per slice spec.
+    redis.expire.assert_called_with("trip:trip-249:events", 1800)
+
+
+@pytest.mark.asyncio
+async def test_make_callbacks_task_cb_lpushes_to_events_list() -> None:
+    """task_cb LPUSHes too — this is the NEW wire added in slice 4.7-theater
+    (the pre-249 task_cb was Redis-silent, which compounded the static-
+    text-for-10-min gap when step_cb fired 0 times under CrewAI single-
+    shot LLM outputs per kyh-reframe diagnosis).
+    """
+    redis = AsyncMock()
+    loop = asyncio.get_event_loop()
+    captured_coros: list = []
+
+    def _capture_schedule(coro: Any, _loop: Any) -> Any:
+        captured_coros.append(coro)
+        return MagicMock()
+
+    _events, _step_cb, task_cb, _counters = worker._make_callbacks(
+        redis=redis, trip_id="trip-249", loop=loop
+    )
+
+    with patch("asyncio.run_coroutine_threadsafe", side_effect=_capture_schedule):
+        task_cb(_FakeTaskOutput("Logistics Planner", "built day-by-day plan"))
+
+    await _drain_scheduled_coros(captured_coros)
+
+    assert redis.lpush.called, "task_cb must LPUSH to the events list"
+    key, payload_bytes = redis.lpush.call_args[0]
+    assert key == "trip:trip-249:events"
+    payload = json.loads(payload_bytes)
+    assert payload["event"] == "task_completed"
+    assert payload["agent_role"] == "Logistics Planner"
+    # Same cap + TTL semantics as step_cb.
+    redis.ltrim.assert_called_with("trip:trip-249:events", 0, 49)
+    redis.expire.assert_called_with("trip:trip-249:events", 1800)
+
+
+@pytest.mark.asyncio
+async def test_make_callbacks_no_redis_writes_when_pool_absent() -> None:
+    """Backward compat: when no Redis pool is wired (existing test_worker
+    paths that pass _ctx() without redis), callbacks still accumulate the
+    in-memory events list — no Redis writes attempted. The new theater
+    wire must not break the silent-default behavior.
+    """
+    captured_coros: list = []
+
+    def _capture_schedule(coro: Any, _loop: Any) -> Any:
+        captured_coros.append(coro)
+        return MagicMock()
+
+    _events, step_cb, task_cb, _counters = worker._make_callbacks(
+        redis=None, trip_id=None, loop=None
+    )
+
+    with patch("asyncio.run_coroutine_threadsafe", side_effect=_capture_schedule):
+        step_cb(_FakeStep("Travel Researcher", "found candidates"))
+        task_cb(_FakeTaskOutput("Logistics Planner", "built day-by-day plan"))
+
+    # Zero coroutines scheduled — no Redis-bound work attempted.
+    assert captured_coros == [], (
+        f"expected no Redis writes when pool absent; got {len(captured_coros)} scheduled coros"
+    )
