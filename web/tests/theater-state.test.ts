@@ -98,9 +98,12 @@ describe("deriveAgentStates", () => {
   });
 
   it("events without agent_role are ignored (legacy + callback_summary + malformed)", async () => {
-    // Backward-compat: legacy events lack agent_role; callback_summary
-    // is structurally heterogeneous (no agent_role at all). Neither
-    // contributes to agent card state derivation.
+    // Backward-compat: legacy AgentFinish events lack agent_role and
+    // can't be attributed (no task_index, no proximity rule — too
+    // brittle); callback_summary is structurally heterogeneous (no
+    // agent_role at all). Neither contributes to agent card state
+    // derivation. task_completed without agent_role IS attributable
+    // via task_index — tested separately below.
     const events: AgentSummaryRow[] = [
       // No agent_role.
       {
@@ -117,6 +120,110 @@ describe("deriveAgentStates", () => {
     ];
     const { deriveAgentStates } = await import("@/lib/theater-state");
     expect(deriveAgentStates(events)).toEqual({});
+  });
+});
+
+describe("deriveAgentStates — task_index fallback (pre-Path-B legacy data)", () => {
+  // The Coorg trip (planned 2026-06-06, pre-Path-B) has task_completed
+  // events without agent_role. The crew composition in
+  // agents/src/trip_agents/crew.py:179 locks the task ordering:
+  //   task_index=1 → Researcher
+  //   task_index=2 → Local Expert
+  //   task_index=3 → Logistics Planner
+  // We use task_index as the fallback so legacy trips still render
+  // accurate card states.
+
+  it("task_completed task_index=1 without agent_role → Travel Researcher card done", async () => {
+    const events: AgentSummaryRow[] = [
+      {
+        event: "task_completed",
+        timestamp: "2026-06-06T16:08:00+00:00",
+        elapsed_ms: 312000,
+        task_index: 1,
+        // No agent_role — pre-Path-B legacy shape.
+      },
+    ];
+    const { deriveAgentStates } = await import("@/lib/theater-state");
+    const result = deriveAgentStates(events);
+    expect(result["Travel Researcher"]).toEqual({
+      state: "done",
+      durationMs: 312000,
+    });
+  });
+
+  it("task_completed task_index=2 without agent_role → Local Expert card done", async () => {
+    const events: AgentSummaryRow[] = [
+      {
+        event: "task_completed",
+        timestamp: "2026-06-06T16:10:00+00:00",
+        elapsed_ms: 545000,
+        task_index: 2,
+      },
+    ];
+    const { deriveAgentStates } = await import("@/lib/theater-state");
+    const result = deriveAgentStates(events);
+    expect(result["Local Expert"]).toEqual({
+      state: "done",
+      durationMs: 545000,
+    });
+  });
+
+  it("task_completed task_index=3 without agent_role → Logistics Planner card done", async () => {
+    const events: AgentSummaryRow[] = [
+      {
+        event: "task_completed",
+        timestamp: "2026-06-06T16:14:00+00:00",
+        elapsed_ms: 240000,
+        task_index: 3,
+      },
+    ];
+    const { deriveAgentStates } = await import("@/lib/theater-state");
+    const result = deriveAgentStates(events);
+    expect(result["Logistics Planner"]).toEqual({
+      state: "done",
+      durationMs: 240000,
+    });
+  });
+
+  it("task_completed with out-of-range task_index AND no agent_role is ignored (defensive)", async () => {
+    // task_index=4+ would be the audit loop or future task additions;
+    // without an agent_role hint we can't safely attribute. Skip
+    // rather than mis-attribute to the wrong card.
+    const events: AgentSummaryRow[] = [
+      {
+        event: "task_completed",
+        timestamp: "2026-06-06T16:20:00+00:00",
+        elapsed_ms: 60000,
+        task_index: 99,
+      },
+    ];
+    const { deriveAgentStates } = await import("@/lib/theater-state");
+    expect(deriveAgentStates(events)).toEqual({});
+  });
+
+  it("Path B data takes precedence over task_index fallback (newer trips)", async () => {
+    // When agent_role IS present (post-Path-B), use that verbatim.
+    // For destination-aware variants like "Local Coorg Expert", the
+    // parent component's prefix-match handles card lookup — the state
+    // map key stays the raw role string.
+    const events: AgentSummaryRow[] = [
+      {
+        event: "task_completed",
+        timestamp: "2026-06-09T10:05:00+00:00",
+        elapsed_ms: 312000,
+        task_index: 2,
+        agent_role: "Local Coorg Expert",
+      },
+    ];
+    const { deriveAgentStates } = await import("@/lib/theater-state");
+    const result = deriveAgentStates(events);
+    expect(result["Local Coorg Expert"]).toEqual({
+      state: "done",
+      durationMs: 312000,
+    });
+    // The task_index=2 fallback ("Local Expert") MUST NOT also appear —
+    // agent_role wins, single source of truth.
+    expect(result["Local Expert"]).toBeUndefined();
   });
 });
 
