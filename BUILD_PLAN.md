@@ -458,6 +458,36 @@ The slice-4.6 close-out led directly into a same-day hotfix arc. Phase 3 manual 
 
 **Cumulative tests after the arc**: backend 223/223, web vitest 200/200. Cumulative session deferrals: 7 tickets filed (`nwk` + `kyh` + `3x5` closed; `7n6` + `d42` + `mbw` + `wew` + `aqx` + `82y` open; `nhm` discharged). Three banked observations captured in respective ticket bodies — test-passes-but-production-breaks footgun; investigation-from-symptoms; outlier-vs-regression-distinction; frontend-filters-can-mask-backend-regressions; diagnostic-hypothesis-can-be-wrong-but-discipline-is-right.
 
+### Slice 4.7-theater: Live planning theater + replayable agent trace (`trip-concierge-249`)
+
+- [x] **Done when:** Trip detail page during `isPlanning` (queued/running/cancelling) renders the live `<PlanningTheater />` — 4-up agent card grid + density-toggleable event log polled at 2500ms — replacing the pre-249 static "Your trip is being planned" surface. Terminal-state trips surface a "View agent trace" link below the destination h1; click opens a modal containing the same `<PlanningTheater />` in replay mode driven by `agent_summary`. First user-facing real-time surface in the app.
+- **5-commit decomposition:**
+  - Commit 1 (`769f004`, PR #51) — Backend Redis events wire: worker `_lpush_event` helper writes step + task callbacks to `trip:{id}:events` (LPUSH newest-first, LTRIM cap=50, EXPIRE 30min); `events_in_flight` field added to PlanStatus schema; `_read_events_in_flight` helper in plan route reads on every non-terminal poll. 7 net new pytest tests (3 worker + 4 route).
+  - Commit 2 (`e457820`, PR #52) — Theater primitives: `web/lib/theater-state.ts` (`deriveAgentStates` + `filterEventsByDensity` pure functions); `<AgentCard />` (state-icon + role + duration); `<LiveEventLog />` (compact 3-event timeline); `<EventDensityToggle />` (Major/All sessionStorage-backed).
+  - Commit 3 (`dad249d`, PR #53) — Theater wire: `usePlanStatusPoll` hook (2500ms polling, stops on terminal, disabled short-circuit); `<PlanningTheater />` container (prefix-match card-to-role lookup handles destination-aware variants); `fetchPlanStatusAction` Server Action; trip detail page swaps `isPlanning` branch to the live theater.
+  - Commit 4 (`aa083c7`, PR #55) — Settle transition + replay-mode trace modal: PlanningTheater fades to 50% opacity on terminal then calls `router.refresh()` after 500ms for seamless RSC handoff; `<ViewAgentTraceLink />` (§9.18 modal pattern) renders the theater in replay mode against `agent_summary`. 14 net new vitest tests.
+  - Commit 5 — Docs (spec §9.19 + v1.0.8 changelog) + this BUILD_PLAN entry.
+- **2 hotfixes during the slice:**
+  - `0pj` (merge `c2114d0`, PR #54) — EventDensityToggle hydration mismatch. Reading sessionStorage in `useState` initializer disagreed with server-side default; mounted-flag pattern (returns null until useEffect fires post-mount) makes SSR + client first-render produce identical empty output. Single-file change + 1 new SSR-render test.
+  - `0a81281` (PR #56) — Replay-modal agent identity for pre-Path-B trips. Cards stuck at default + log rows leaking literal "task_completed" / "AgentFinish" event names because Coorg + Manali agent_summary rows lack `agent_role`. Single source of truth in `web/lib/agent-summary-format.ts` (`resolveAgentRole` chains agent_role → task_index → undefined; task ordering locked at `agents/src/trip_agents/crew.py:179`). LiveEventLog rewritten to mirror PlanHistoryPanel row pattern (icon + role + timestamp + duration). 11 net new tests.
+- **Q-impl-249 design dialogue sign-off captured in spec §9.19:** o=B (fade + router.refresh after 500ms), p=A (Tailwind transition-opacity, no new deps), q=A (link below destination h1), r=B (§9.18 modal pattern), s=A (full PlanningTheater in replay mode), t=C (sessionStorage density key shared across modes), c=4-up + density + log layout, d=A (Auditor defaults "waiting" not idle), e=A (Major = task_completed + callback_summary), i=shared-data-shape principle, k=A (compact inline log rows), n=A (visibility-aware polling deferred), R6 (cards always show full state; density filters only log).
+- **Backend additions:**
+  - `backend/app/worker.py`: `_lpush_event` helper + `_EVENTS_LIST_CAP = 50` + `_EVENTS_LIST_TTL_SECONDS = 1800`
+  - `backend/app/routes/plan.py`: `_read_events_in_flight` helper called in all non-terminal branches
+  - `backend/app/schemas/plan.py`: `events_in_flight: list[dict[str, Any]] | None = None`
+- **Frontend files created:** `web/lib/theater-state.ts`, `web/lib/agent-summary-format.ts`, `web/lib/use-plan-status-poll.ts`, `web/components/agent-card.tsx`, `web/components/event-density-toggle.tsx`, `web/components/live-event-log.tsx`, `web/components/planning-theater.tsx`, `web/components/view-agent-trace-link.tsx` + 7 vitest test files
+- **Frontend files modified:** `web/lib/actions.ts` (added `fetchPlanStatusAction`), `web/lib/backend.ts` (PlanStatus `events_in_flight`), `web/components/plan-history-panel.tsx` (refactor to shared `agent-summary-format` + `resolveAgentRole` for Coorg/Manali), `web/app/trips/[id]/page.tsx` (theater on isPlanning + trace link on terminal), `web/vitest.setup.ts` (jsdom polyfill extended)
+- **Followup tickets filed during slice 4.7-theater (v1.0b backlog):**
+  - `trip-concierge-2me` (P2): Visibility-aware polling — pause polling when tab hidden, resume on focus; saves backend cycles on background tabs
+  - `trip-concierge-39b` (P3): Per-agent live working duration display while running (running ticker, not just final duration)
+  - `trip-concierge-9ij` (P3): AgentFinish proximity attribution if engineering audience requests All-filter improvement
+  - `trip-concierge-pze` (P3): Theater on mobile responsive review — 4-up grid may need stacked variant under 640px
+  - `trip-concierge-8xk` (P2): Backfill `agent_role` on pre-Path-B JobRuns via one-off migration; eliminates the task_index fallback once consumed
+- **Tests:** 32 net new (7 backend + 25 web vitest including 2 hotfixes). Cumulative web vitest: 247.
+- **Methodology observation banked.** First user-facing real-time surface in the app — milestone worth flagging. The dual-rendering invariant (same component, two data sources differentiated by `disabled` short-circuit) is the architectural choice that made commit 4's replay modal a single-line component wiring rather than a fork. Sharing the data shape across live + replay surfaces also surfaced the agent-attribution bug as one fix instead of two divergent ones.
+- **Beads:**
+  - `trip-concierge-249`: Slice 4.7-theater (closed at merge of commit 5).
+
 ### Slice 4.7: Source citations expansion + "why this was picked"
 
 - [ ] **Done when:** Tapping a block expands to show source list, confidence indicator, and rationale.
