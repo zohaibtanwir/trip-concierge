@@ -153,6 +153,12 @@ export interface PlanStatus {
   // schema. Empty list on legacy JobRuns (pre-qek-a); null on
   // synthesized no_job state (no JobRun row exists at all).
   agent_summary?: AgentSummaryRow[] | null;
+  // Slice 4.7-theater (trip-concierge-249). In-flight Redis-backed
+  // event stream during non-terminal states. null at terminal (use
+  // agent_summary); empty list when run active but no callbacks fired
+  // yet; populated list = LPUSH newest-first order. The theater UI
+  // polls /plan/status and reads this field for live agent activity.
+  events_in_flight?: AgentSummaryRow[] | null;
 }
 
 export interface TripDetail {

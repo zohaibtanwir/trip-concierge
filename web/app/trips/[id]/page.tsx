@@ -22,6 +22,7 @@ import { Header } from "@/components/header";
 import { PlanAgainDialog } from "@/components/plan-again-dialog";
 import { PlanControlsPanel } from "@/components/plan-controls-panel";
 import { PlanHistoryPanel } from "@/components/plan-history-panel";
+import { PlanningTheater } from "@/components/planning-theater";
 import { TripDay } from "@/components/trip-day";
 import { TripMap } from "@/components/trip-map";
 import { planAgainAction } from "@/lib/actions";
@@ -39,12 +40,6 @@ function _isFailedState(planStatus: PlanStatus): boolean {
 
 function _isSucceededState(planStatus: PlanStatus): boolean {
   return planStatus.state === "done" && planStatus.approved !== false;
-}
-
-function _progressLine(planStatus: PlanStatus): string | null {
-  const pm = planStatus.progress_message;
-  if (!pm) return null;
-  return pm.message ? `${pm.agent} (pass ${pm.pass}): ${pm.message}` : pm.agent;
 }
 
 interface DetailPageProps {
@@ -93,17 +88,11 @@ export default async function TripDetailPage({ params }: DetailPageProps) {
           {/* === Left column (primary content) === */}
           <div className="col-span-12 md:col-span-8 space-y-8">
             {isPlanning && (
-              <section className="rounded-xl border border-outline-variant bg-primary-fixed-dim/10 p-6">
-                <p className="text-label-md text-on-primary-fixed-variant">
-                  Your trip is being planned.
-                </p>
-                {_progressLine(planStatus) && (
-                  <p className="mt-2 text-body-md text-on-surface">{_progressLine(planStatus)}</p>
-                )}
-                <p className="mt-2 text-body-md text-on-surface-variant">
-                  Check back in a few minutes.
-                </p>
-              </section>
+              // Slice 4.7-theater (trip-concierge-249) commit 3.
+              // Replaces the pre-249 static "Your trip is being planned"
+              // section. PlanningTheater polls /plan/status at 2500ms
+              // and renders live agent activity until terminal state.
+              <PlanningTheater mode="live" tripId={tripId} userId={userId} />
             )}
 
             {isFailed && (

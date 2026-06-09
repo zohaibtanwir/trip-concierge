@@ -479,3 +479,41 @@ export async function setBlockLockAction({
   }
   return (await response.json()) as Block;
 }
+
+/**
+ * fetchPlanStatusAction — invoked by usePlanStatusPoll (slice 4.7-theater
+ * commit 3, trip-concierge-249). Polls GET /trips/{tripId}/plan/status at
+ * 2500ms while the trip is in a non-terminal state, surfacing the
+ * Redis-backed events_in_flight stream to the live planning theater UI.
+ *
+ * Returns the full PlanStatus including the new events_in_flight field
+ * (commit 1 backend wire). Caller (usePlanStatusPoll) consumes:
+ *   - state — to know when to stop polling (terminal {done, failed,
+ *     cancelled})
+ *   - events_in_flight (live) OR agent_summary (terminal) — to drive
+ *     the theater agent cards + event log
+ *
+ * Per Q-impl-249-m=A: Server Action wrapper, not client direct fetch.
+ * Matches established u8v object-args pattern; server-side token mint
+ * keeps the internal secret server-side.
+ */
+export async function fetchPlanStatusAction({
+  tripId,
+  userId,
+}: {
+  tripId: string;
+  userId: string;
+}): Promise<PlanStatus> {
+  const { mcp_token } = await mintMcpToken({ userId });
+  const response = await fetch(`${env.BACKEND_URL}/trips/${tripId}/plan/status`, {
+    method: "GET",
+    headers: { "x-tc-token": mcp_token },
+  });
+  if (!response.ok) {
+    throw new BackendError(
+      response.status,
+      `fetchPlanStatusAction HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  return (await response.json()) as PlanStatus;
+}
