@@ -1079,7 +1079,153 @@ InvalidStateError; future infrastructure gaps must be explicit
 **Code references:** `web/vitest.setup.ts` (polyfill),
 `web/components/new-trip-dialog.tsx` (slice 4.5c c3),
 `web/components/regenerate-day-dialog.tsx` (slice 4.6 c2),
-`web/components/block-alternative-dialog.tsx` (slice 4.6 c3).
+`web/components/block-alternative-dialog.tsx` (slice 4.6 c3),
+`web/components/view-agent-trace-link.tsx` (slice 4.7-theater c4).
+
+---
+
+### 9.19 Planning theater + replay-mode dual rendering
+
+Real-time agent-activity surface for plan-trip runs, plus a replay-mode
+modal that renders the same component against historical
+`agent_summary` data. Introduced slice 4.7-theater (`trip-concierge-249`,
+2026-06-09). First user-facing real-time surface in the app — the
+demo's load-bearing visual proof that a multi-agent system is doing
+work, not a black-box "planning…" spinner.
+
+**Surfaces:**
+
+| Surface | When | Data source | Polling |
+|---|---|---|---|
+| Live theater | `isPlanning` (queued / running / cancelling) on trip detail page | `events_in_flight` field from `/plan/status` | 2500ms via `usePlanStatusPoll` |
+| Replay modal | Terminal trip header → "View agent trace" link click | `agent_summary` prop on `<PlanningTheater mode="replay" />` | None (`disabled: true` short-circuits the hook) |
+
+**The dual-rendering invariant.** Same `<PlanningTheater />` component
+renders both. Differs only in `mode` prop and data source. The hook is
+always called (React Hooks rules); `disabled: true` is the
+short-circuit. This means:
+
+- Card rendering, density toggle, event log, settle transition — all
+  identical across modes
+- One DOM tree to test, one set of styling decisions
+- Density preference (`sessionStorage["theater-density"]`) carries
+  across live → replay → live for the same user
+
+**Layout (Q-impl-249-c sign-off):**
+
+```
+┌─────────────────────────────────────────────────┐
+│  Your crew is at work                           │   ← header
+│  4 specialist agents collaborate on your trip   │
+├─────────────────────────────────────────────────┤
+│  [Researcher] [Local Expert] [Logistics] [Audit]│   ← 4-up card grid
+├─────────────────────────────────────────────────┤
+│  Recent activity              [Major | All]     │   ← density toggle
+├─────────────────────────────────────────────────┤
+│  ▸ Travel Researcher  17:34:08         312.0s   │   ← LiveEventLog
+│  ▸ Local Expert       17:39:08         545.0s     (3 most-recent;
+│  ▸ Logistics Planner  17:44:00         240.0s      density-filtered)
+└─────────────────────────────────────────────────┘
+```
+
+**Card derivation (deriveAgentStates).** Pure function in
+`web/lib/theater-state.ts`:
+
+- task_completed → that agent's card → "done" (monotonic; later events
+  for the same role can't downgrade)
+- AgentFinish without prior task_completed → "working"
+- No event for an agent → default state (idle for first 3, "waiting"
+  for Budget Auditor per Q-249-d=A — Auditor runs in a separate Python
+  audit loop after the main kickoff)
+
+**Card-to-role lookup.** Prefix-based (`role.includes("Researcher")`)
+so destination-aware role variants ("Local Coorg Expert", "Local
+Pondicherry Expert") drive the same canonical card without
+per-destination configuration.
+
+**Density toggle (Q-impl-249-e=A).** Two states with
+`sessionStorage["theater-density"]` persistence. Filters only the
+LiveEventLog — cards always show full state (R6 confirmation).
+
+- **Major** (default) — task_completed + callback_summary only. 3
+  handoffs + 1 tally = the clean demo rhythm
+- **All** — every event including AgentFinish reasoning steps
+
+**Mounted-flag pattern (hotfix-0pj 2026-06-09).** EventDensityToggle
+reads `sessionStorage` in `useEffect`, not `useState` initializer.
+Returns `null` until mount → both SSR and client first-render produce
+empty output → no hydration mismatch when the persisted choice
+disagrees with the default. Brief flicker is acceptable for a
+polish element.
+
+**Settle transition (Q-impl-249-o=B, Q-impl-249-p=A).** When live
+mode hits a terminal state, the theater fades to 50% opacity via
+Tailwind `transition-opacity duration-500` and after a 500ms settle
+window calls `router.refresh()` — forcing an RSC re-fetch so the
+post-completion surfaces (day blocks, day-chip timeline,
+PlanHistoryPanel) render seamlessly without a manual reload.
+`useRef` guard ensures refresh fires exactly once.
+
+**Replay modal (Q-impl-249-q=A, Q-impl-249-s=A).** "View agent trace"
+link below destination h1 in terminal-state header. Click opens §9.18
+modal containing the full PlanningTheater in replay mode. Discoverable
+in natural read order; doesn't bloat PlanHistoryPanel.
+
+**Backend event stream contract.** Worker writes step + task callbacks
+to TWO sinks during the kickoff:
+
+1. Redis `trip:{id}:events` list (LPUSH newest-first, LTRIM cap=50,
+   EXPIRE 30min) — drives the live polling surface
+2. In-memory list that becomes JobRun.agent_summary at terminal —
+   drives the replay modal
+
+Polling reads Redis when non-terminal; agent_summary when terminal.
+Same event shape both sides — the discriminated union
+`AgentSummaryRow` (AgentFinish | task_completed | callback_summary).
+
+**Agent attribution fallback (hotfix `0a81281` 2026-06-09).** Single
+source of truth in `web/lib/agent-summary-format.ts`:
+
+```ts
+resolveAgentRole(event) =
+  event.agent_role             // Path B enrichment
+  ?? TASK_INDEX_TO_ROLE[i-1]   // task_completed legacy fallback
+  ?? undefined                  // AgentFinish without role
+```
+
+Task ordering locked at `agents/src/trip_agents/crew.py:179`: 1 =
+Travel Researcher, 2 = Local Expert, 3 = Logistics Planner. Auditor
+runs in a separate audit loop, no task_index. Without this fallback,
+pre-Path-B trips (Coorg, Manali) rendered cards stuck at default
+state and log rows with literal "task_completed" / "AgentFinish"
+event-name leaks. Proximity-based attribution for AgentFinish-without-
+role considered + explicitly rejected (live-mode events are LPUSH'd
+newest-first vs replay-mode chronological — sort-before-attribute
+adds bug surface for marginal demo gain).
+
+When `resolveAgentRole` returns undefined, render `REASONING_STEP_TITLE`
+("Reasoning step") instead of the raw event name. Generic but readable;
+beats leaking internal event labels to the user.
+
+**Cross-surface formatting.** `formatDuration` + `formatTime` (date-
+context-aware: same-day, Yesterday, weekday, month-day) shared between
+LiveEventLog + PlanHistoryPanel via `agent-summary-format.ts`.
+Drift between surfaces would be a user-visible paper cut.
+
+**Deferred to v1.0b:**
+
+- Visibility-aware polling (pause when tab hidden) — `trip-concierge-2me`
+- AgentFinish proximity attribution if All-filter usage demand emerges —
+  no ticket; capture if demo audience requests
+
+**Code references:** `web/components/planning-theater.tsx`,
+`web/components/view-agent-trace-link.tsx`,
+`web/components/agent-card.tsx`, `web/components/live-event-log.tsx`,
+`web/components/event-density-toggle.tsx`,
+`web/lib/theater-state.ts`, `web/lib/agent-summary-format.ts`,
+`web/lib/use-plan-status-poll.ts`, `backend/app/worker.py`
+(`_lpush_event`), `backend/app/routes/plan.py`
+(`_read_events_in_flight`).
 
 ---
 
@@ -1521,6 +1667,7 @@ different layers (feature-axis discharge vs orthogonal-axis budget).
 
 ## Changelog
 
+- **v1.0.8** (2026-06-09) — Added §9.19 (Planning theater + replay-mode dual rendering) from slice 4.7-theater `trip-concierge-249`. First user-facing real-time surface in the app — 4-up agent grid + density-toggleable event log polled at 2500ms during live runs; same component renders in replay mode (modal) against `agent_summary` for terminal trips. Codifies the dual-rendering invariant (one component, two data sources), the settle transition (opacity-50 fade + 500ms `router.refresh()` for seamless RSC handoff), and the agent-attribution fallback chain (`agent_role` → `task_index` → "Reasoning step"). Bundles two hotfixes: `0pj` (EventDensityToggle hydration mismatch — mounted-flag pattern) and `0a81281` (task_index fallback for pre-Path-B legacy trips). Backend additions: Redis `trip:{id}:events` LPUSH stream with LTRIM cap=50 + 30min EXPIRE; `events_in_flight` field on PlanStatus. Additive only — no breaking changes to existing tokens or patterns.
 - **v1.0.7** (2026-06-08) — Added §9.18 (Dialog modal-mode pattern) from hotfix `trip-concierge-nwk`. Codifies the imperative `useEffect`-driven `showModal`/`close` pattern with explicit footgun callout (declarative `<dialog open>` breaks modal mode in real browsers — slice 4.5c + 4.6 shipped 3 dialogs with the bug). Includes test-infrastructure note: `vitest.setup.ts` polyfills `HTMLDialogElement.{showModal, close}` to mirror real-browser `InvalidStateError`, plus required regression assertion on spy `mock.results[0].type`. Banked observation: workarounds for test infrastructure should also be tested at the level they bypass.
 - **v1.0.6** (2026-06-08) — Added §9.17 (Block-action cluster) from slice 4.6. Pattern-only spec for the composable bottom-right block-scoped action surface; v1.0a instances are `<BlockLockToggle />` + `<BlockAlternativeDialog />`. Codifies always-visible state indicators, optimistic-UI + inline-error patterns (no toast primitive scope-creep), and aria-label discipline (name the action, not the state). Additive only — no breaking changes.
 - **v1.0.5** (2026-06-07) — Added §9.16 (Application shell — Header, Landing, NewTripDialog) and §17.13 (Application shell ownership pattern meta) from slice 4.5c. Documents the non-`/trips/[id]`-bound surfaces that frame the product (sticky-glass Header, landing page, two-paths NewTripDialog) plus the methodological learning about non-feature-axis ownership budgets. Additive only — no breaking changes.
