@@ -34,6 +34,12 @@
 
 "use client";
 
+import {
+  formatDuration,
+  formatTime,
+  REASONING_STEP_TITLE,
+  resolveAgentRole,
+} from "@/lib/agent-summary-format";
 import type {
   AgentSummaryAgentFinishRow,
   AgentSummaryCallbackSummaryRow,
@@ -41,64 +47,18 @@ import type {
   AgentSummaryTaskCompletedRow,
 } from "@/lib/backend";
 
-function _formatDuration(ms: number): string {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${ms}ms`;
-}
-
-function _formatTime(iso: string, now: Date = new Date()): string {
-  // Date-context-aware formatter (slice 4d0 polish, 2026-06-07).
-  //   same day      → "HH:MM:SS"
-  //   yesterday     → "Yesterday · HH:MM:SS"
-  //   within 7 days → "Sat · HH:MM:SS"  (3-letter weekday)
-  //   older         → "Jun 6 · HH:MM:SS"
-  // Stripping the date silently confuses readers viewing multi-day-old
-  // trips; per the slice 4d0 Sunday smoke fourth-UI-data-context-bug
-  // observation, any timestamp in a list of historical events needs
-  // relative-date framing.
-  let d: Date;
-  try {
-    d = new Date(iso);
-    if (Number.isNaN(d.getTime())) throw new Error("NaN");
-  } catch {
-    return iso.slice(11, 19);
-  }
-  const time = d.toLocaleTimeString(undefined, { hour12: false });
-
-  // Compare against now's calendar day (browser TZ).
-  const sameDay = (a: Date, b: Date): boolean =>
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate();
-  if (sameDay(d, now)) return time;
-
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (sameDay(d, yesterday)) return `Yesterday · ${time}`;
-
-  const sevenDaysAgo = new Date(now);
-  sevenDaysAgo.setDate(now.getDate() - 7);
-  if (d >= sevenDaysAgo && d < now) {
-    const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(d);
-    return `${weekday} · ${time}`;
-  }
-
-  const dateLabel = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
-    d,
-  );
-  return `${dateLabel} · ${time}`;
-}
-
 function _AgentFinishRow({ row }: { row: AgentSummaryAgentFinishRow }) {
-  // Title prefers agent_role (Path B); falls back to event name for
-  // legacy JobRuns written before the enrichment shipped.
+  // Title prefers agent_role (Path B); falls back to generic
+  // "Reasoning step" for pre-Path-B legacy data instead of leaking the
+  // raw event name to the user. Proximity-based attribution was
+  // considered + rejected (see agent-summary-format docstring).
   //
   // Hotfix-on7 (2026-06-08 evening): output_excerpt rendering removed.
   // The CrewAI scratchpad content (raw JSON dumps, agent reasoning
   // commentary) was demo-inappropriate. v1.0b structured summaries
   // (trip-concierge-q1v) will replace; until then the panel surfaces
   // role + timing only.
-  const title = row.agent_role || row.event;
+  const title = row.agent_role || REASONING_STEP_TITLE;
   return (
     <li key={`${row.event}-${row.timestamp}`} className="flex items-baseline justify-between gap-4">
       <div className="flex items-center gap-2">
@@ -109,10 +69,10 @@ function _AgentFinishRow({ row }: { row: AgentSummaryAgentFinishRow }) {
         {/* sr-only event-type per Q-pathb-impl-a=B: icon is
             aria-hidden, screen readers need the semantic context. */}
         <span className="sr-only">reasoning step</span>
-        <span className="text-label-sm text-on-surface-variant">{_formatTime(row.timestamp)}</span>
+        <span className="text-label-sm text-on-surface-variant">{formatTime(row.timestamp)}</span>
       </div>
       <span className="text-label-sm text-on-surface-variant">
-        {_formatDuration(row.elapsed_ms)}
+        {formatDuration(row.elapsed_ms)}
       </span>
     </li>
   );
@@ -124,9 +84,14 @@ function _TaskCompletedRow({ row }: { row: AgentSummaryTaskCompletedRow }) {
   // distinct from AgentFinish (check_circle vs psychology) to preserve
   // the completion-vs-reasoning semantic per Q-pathb-b=B.
   //
+  // Title resolution: agent_role (Path B) → task_index → canonical
+  // role (pre-Path-B legacy: Coorg, Manali). Discharges the replay-
+  // modal hotfix for legacy trips where task_completed rows previously
+  // rendered as literal "task_completed" titles.
+  //
   // Hotfix-on7 (2026-06-08 evening): output_excerpt rendering removed
   // for the same reason as _AgentFinishRow above.
-  const title = row.agent_role || row.event;
+  const title = resolveAgentRole(row) ?? REASONING_STEP_TITLE;
   return (
     <li key={`${row.event}-${row.timestamp}`} className="flex items-baseline justify-between gap-4">
       <div className="flex items-center gap-2">
@@ -135,10 +100,10 @@ function _TaskCompletedRow({ row }: { row: AgentSummaryTaskCompletedRow }) {
         </span>
         <span className="text-label-md text-on-surface">{title}</span>
         <span className="sr-only">agent completion</span>
-        <span className="text-label-sm text-on-surface-variant">{_formatTime(row.timestamp)}</span>
+        <span className="text-label-sm text-on-surface-variant">{formatTime(row.timestamp)}</span>
       </div>
       <span className="text-label-sm text-on-surface-variant">
-        {_formatDuration(row.elapsed_ms)}
+        {formatDuration(row.elapsed_ms)}
       </span>
     </li>
   );

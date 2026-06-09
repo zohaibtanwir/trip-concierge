@@ -131,9 +131,12 @@ describe("<PlanHistoryPanel /> Path B — agent_role + task_completed rendering"
     expect(screen.queryByText(/^AgentFinish$/)).toBeNull();
   });
 
-  it("AgentFinish row falls back to event name when agent_role is absent (backward compat)", async () => {
-    // Legacy JobRuns from pre-Path-B writes lack agent_role. The
-    // renderer must still produce a readable row.
+  it("AgentFinish without agent_role renders 'Reasoning step' (no event-name leak)", async () => {
+    // Pre-Path-B legacy AgentFinish has no agent_role + no task_index.
+    // Renderer surfaces a generic-but-readable "Reasoning step" title
+    // instead of literal "AgentFinish" (demo-inappropriate event name
+    // leak). Proximity-based attribution explicitly skipped — too
+    // brittle across live newest-first vs replay chronological ordering.
     const row: AgentSummaryRow = {
       event: "AgentFinish",
       timestamp: "2026-06-08T12:23:00.000+00:00",
@@ -142,7 +145,39 @@ describe("<PlanHistoryPanel /> Path B — agent_role + task_completed rendering"
     };
     const { PlanHistoryPanel } = await import("@/components/plan-history-panel");
     render(<PlanHistoryPanel agentSummary={[row]} defaultExpanded />);
-    expect(screen.getByText(/AgentFinish/)).toBeDefined();
+    // Both the visible title AND the sr-only event-type label render
+    // "Reasoning step" — getAllByText covers both.
+    expect(screen.getAllByText(/Reasoning step/i).length).toBeGreaterThanOrEqual(1);
+    // Negative: the bare event-name string must NOT appear as the row title.
+    expect(screen.queryByText(/^AgentFinish$/)).toBeNull();
+  });
+
+  it("task_completed without agent_role falls back to task_index → canonical role", async () => {
+    // Coorg / Manali pre-Path-B data: agent_role missing, task_index
+    // present. Task ordering is locked at
+    // agents/src/trip_agents/crew.py:179: 1=Researcher, 2=Local Expert,
+    // 3=Logistics. The renderer uses this to surface the correct agent
+    // name instead of literal "task_completed".
+    const events: AgentSummaryRow[] = [
+      {
+        event: "task_completed",
+        timestamp: "2026-06-06T16:08:00+00:00",
+        elapsed_ms: 312000,
+        task_index: 1,
+      },
+      {
+        event: "task_completed",
+        timestamp: "2026-06-06T16:14:00+00:00",
+        elapsed_ms: 240000,
+        task_index: 3,
+      },
+    ];
+    const { PlanHistoryPanel } = await import("@/components/plan-history-panel");
+    render(<PlanHistoryPanel agentSummary={events} defaultExpanded />);
+    expect(screen.getByText(/Travel Researcher/)).toBeDefined();
+    expect(screen.getByText(/Logistics Planner/)).toBeDefined();
+    // Negative: bare event-name must NOT appear.
+    expect(screen.queryByText(/^task_completed$/)).toBeNull();
   });
 
   it("task_completed row titles with agent_role (Q-pathb-c=A)", async () => {

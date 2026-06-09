@@ -14,6 +14,7 @@
  * density toggle. Density filters only the LiveEventLog below.
  */
 
+import { resolveAgentRole } from "@/lib/agent-summary-format";
 import type { AgentSummaryRow } from "@/lib/backend";
 
 export type AgentCardState = "idle" | "queued" | "working" | "done" | "waiting";
@@ -46,7 +47,10 @@ export function deriveAgentStates(events: AgentSummaryRow[]): Record<string, Age
   const result: Record<string, AgentCardData> = {};
   for (const event of events) {
     if (event.event === "callback_summary") continue;
-    const role = event.agent_role;
+    // Path B agent_role wins; task_index fallback covers pre-Path-B
+    // legacy task_completed rows (Coorg, Manali). AgentFinish without
+    // role can't be attributed and is dropped.
+    const role = resolveAgentRole(event);
     if (!role) continue;
 
     if (event.event === "task_completed") {
