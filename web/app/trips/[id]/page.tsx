@@ -25,6 +25,7 @@ import { PlanHistoryPanel } from "@/components/plan-history-panel";
 import { PlanningTheater } from "@/components/planning-theater";
 import { TripDay } from "@/components/trip-day";
 import { TripMap } from "@/components/trip-map";
+import { ViewAgentTraceLink } from "@/components/view-agent-trace-link";
 import { planAgainAction } from "@/lib/actions";
 import { fetchTripDetail, type PlanStatus } from "@/lib/backend";
 
@@ -80,9 +81,17 @@ export default async function TripDetailPage({ params }: DetailPageProps) {
         >
           ← All trips
         </Link>
-        <h1 className="mb-8 text-headline-md text-on-surface md:text-headline-lg">
-          {trip.destination}
-        </h1>
+        <h1 className="text-headline-md text-on-surface md:text-headline-lg">{trip.destination}</h1>
+        {/* Slice 4.7-theater commit 4 (Q-impl-249-q=A): trace link in the
+            page header — natural read order discovery, doesn't bloat
+            PlanHistoryPanel. Terminal states only (succeeded or failed);
+            during planning, the live theater is already rendered. */}
+        {(isSucceeded || isFailed) && agentSummary.length > 0 && (
+          <div className="mt-2 mb-8">
+            <ViewAgentTraceLink tripId={tripId} userId={userId} agentSummary={agentSummary} />
+          </div>
+        )}
+        {!((isSucceeded || isFailed) && agentSummary.length > 0) && <div className="mb-8" />}
 
         <div className="grid grid-cols-12 gap-6 items-start">
           {/* === Left column (primary content) === */}

@@ -38,10 +38,17 @@
  * Coorg Expert" / "Local Pondicherry Expert".
  */
 
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentSummaryRow } from "@/lib/backend";
+
+// Mock useRouter so we can spy on router.refresh() — commit 4 settle
+// transition triggers a refresh after 500ms on terminal state.
+const _refresh = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: _refresh }),
+}));
 
 // Mock the Server Action; commit 3 adds it to lib/actions.ts but the
 // vi.mock factory provides the implementation regardless. Default
@@ -149,5 +156,88 @@ describe("<PlanningTheater /> replay mode", () => {
     // Let microtasks settle to give any latent fetch a chance to fire.
     await new Promise((r) => setTimeout(r, 50));
     expect(fetchPlanStatusAction).not.toHaveBeenCalled();
+  });
+});
+
+describe("<PlanningTheater /> commit 4 settle transition", () => {
+  // Q-impl-249-o=B: when live mode hits terminal state, theater fades to
+  // 50% opacity and triggers router.refresh() after 500ms. Seamless
+  // visual handoff to the post-completion RSC surfaces (day blocks,
+  // DayChipTimeline, PlanHistoryPanel).
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    _refresh.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("applies opacity-50 fade className when live mode transitions to terminal state", async () => {
+    // Q-impl-249-p=A: Tailwind transition-opacity + opacity-50 className
+    // conditional. No new deps; matches existing theater styling.
+    const { fetchPlanStatusAction } = await import("@/lib/actions");
+    (fetchPlanStatusAction as ReturnType<typeof vi.fn>).mockResolvedValue({
+      state: "done",
+      events_in_flight: null,
+      agent_summary: [
+        {
+          event: "task_completed",
+          timestamp: "2026-06-09T10:05:00+00:00",
+          elapsed_ms: 312000,
+          task_index: 1,
+          agent_role: "Travel Researcher",
+        },
+      ],
+    });
+
+    const { PlanningTheater } = await import("@/components/planning-theater");
+    const { container } = render(<PlanningTheater mode="live" tripId="trip-1" userId="user-1" />);
+
+    // Wait for the initial poll to resolve with terminal state.
+    await waitFor(() => {
+      expect(fetchPlanStatusAction).toHaveBeenCalled();
+    });
+
+    // The theater section gets the opacity-50 className once state
+    // hits terminal. Tailwind's transition-opacity carries the fade.
+    await waitFor(() => {
+      const section = container.querySelector("section");
+      expect(section?.className).toMatch(/opacity-50/);
+    });
+  });
+
+  it("triggers router.refresh() ~500ms after live mode hits terminal state", async () => {
+    // Q-impl-249-o=B: after the 500ms fade window, router.refresh()
+    // forces an RSC re-fetch. The page's isPlanning branch becomes
+    // false, terminal surfaces (day blocks, panels) render. User sees
+    // a seamless handoff from theater → terminal view.
+    const { fetchPlanStatusAction } = await import("@/lib/actions");
+    (fetchPlanStatusAction as ReturnType<typeof vi.fn>).mockResolvedValue({
+      state: "done",
+      events_in_flight: null,
+      agent_summary: [],
+    });
+
+    const { PlanningTheater } = await import("@/components/planning-theater");
+    render(<PlanningTheater mode="live" tripId="trip-1" userId="user-1" />);
+
+    await waitFor(() => {
+      expect(fetchPlanStatusAction).toHaveBeenCalled();
+    });
+
+    // BEFORE the 500ms window: refresh should NOT have fired yet.
+    expect(_refresh).not.toHaveBeenCalled();
+
+    // Advance past the 500ms settle window.
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    // Now router.refresh() has been called exactly once.
+    await waitFor(() => {
+      expect(_refresh).toHaveBeenCalledTimes(1);
+    });
   });
 });
