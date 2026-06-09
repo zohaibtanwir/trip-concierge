@@ -26,12 +26,13 @@
 
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 
 import { AgentCard } from "@/components/agent-card";
 import { EventDensityToggle } from "@/components/event-density-toggle";
 import { LiveEventLog } from "@/components/live-event-log";
-import type { AgentSummaryRow } from "@/lib/backend";
+import type { AgentSummaryRow, PlanStatus } from "@/lib/backend";
 import {
   type AgentCardData,
   type AgentCardState,
@@ -39,6 +40,15 @@ import {
   filterEventsByDensity,
 } from "@/lib/theater-state";
 import { usePlanStatusPoll } from "@/lib/use-plan-status-poll";
+
+// Q-impl-249-o=B / Q-impl-249-p=A: when live mode hits terminal state, the
+// theater fades to 50% opacity (Tailwind transition-opacity) and after a
+// 500ms settle window calls router.refresh() — forces an RSC re-fetch so
+// the post-completion surfaces (day blocks, timeline, history panel)
+// render seamlessly without a manual reload.
+const _SETTLE_DELAY_MS = 500;
+
+const _TERMINAL_STATES: ReadonlyArray<PlanStatus["state"]> = ["done", "failed", "cancelled"];
 
 interface PlanningTheaterProps {
   mode: "live" | "replay";
@@ -92,6 +102,7 @@ function _cardDataFor(
 }
 
 export function PlanningTheater({ mode, tripId, userId, events }: PlanningTheaterProps) {
+  const router = useRouter();
   // The hook is always called (React Hooks rules). In replay mode,
   // `disabled: true` short-circuits its effect — no polling.
   const live = usePlanStatusPoll(tripId, userId, { disabled: mode !== "live" });
@@ -104,8 +115,25 @@ export function PlanningTheater({ mode, tripId, userId, events }: PlanningTheate
   const [density, setDensity] = useState<"major" | "all">("major");
   const filteredForLog = filterEventsByDensity(sourceEvents, density);
 
+  // Settle transition (live mode only). Replay mode never settles —
+  // the trip is already terminal when the modal opens; nothing to
+  // refresh.
+  const isSettling =
+    mode === "live" && live.state !== null && _TERMINAL_STATES.includes(live.state);
+  const refreshedRef = useRef(false);
+  useEffect(() => {
+    if (!isSettling || refreshedRef.current) return;
+    refreshedRef.current = true;
+    const handle = setTimeout(() => router.refresh(), _SETTLE_DELAY_MS);
+    return () => clearTimeout(handle);
+  }, [isSettling, router]);
+
   return (
-    <section className="flex flex-col gap-6 rounded-xl border border-outline-variant bg-surface-container-lowest p-6">
+    <section
+      className={`flex flex-col gap-6 rounded-xl border border-outline-variant bg-surface-container-lowest p-6 transition-opacity duration-500 ${
+        isSettling ? "opacity-50" : ""
+      }`}
+    >
       <header>
         <h2 className="text-headline-sm text-on-surface">Your crew is at work</h2>
         <p className="mt-1 text-body-md text-on-surface-variant">
