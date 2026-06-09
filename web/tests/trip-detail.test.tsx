@@ -87,9 +87,15 @@ describe("/trips/[id] detail page", () => {
     const Page = (await import("@/app/trips/[id]/page")).default;
     render(await Page({ params: Promise.resolve({ id: "trip-1" }) }));
 
-    // The planning surface must surface "planning" language AND the
-    // progress message body so the user sees what the crew is working on.
-    expect(screen.getByText(/being planned|in progress|planning/i)).toBeDefined();
+    // Slice 4.7-theater (commit 3): the planning surface is now the
+    // live <PlanningTheater /> with 4 agent cards (Researcher / Expert /
+    // Logistics / Auditor) + a status header. The pre-249 static "being
+    // planned" text was replaced by the theater on the same page.
+    // Use getAllByText — both the heading and the subheading match the
+    // regex (h2 "Your crew is at work" + p "4 specialist agents").
+    const theaterMarkers = screen.getAllByText(/your crew is at work|specialist agents/i);
+    expect(theaterMarkers.length).toBeGreaterThan(0);
+    // Researcher card title visible (the theater renders all 4 cards).
     expect(screen.getByText(/Researcher/)).toBeDefined();
   });
 
