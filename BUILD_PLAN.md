@@ -488,6 +488,49 @@ The slice-4.6 close-out led directly into a same-day hotfix arc. Phase 3 manual 
 - **Beads:**
   - `trip-concierge-249`: Slice 4.7-theater (closed at merge of commit 5).
 
+### Week-of-2026-06-10 closeout — slice 4.7-theater + Marsh deck substrate
+
+Single-session-arc summary spanning 2026-06-08 → 2026-06-13. Captured here because the week's work crossed slice boundaries: feature slice + two experiments + cross-experiment synthesis. Banked to make the "what shipped this week" answer reproducible from BUILD_PLAN alone.
+
+**What shipped to main:**
+
+- Slice 4.7-theater sealed (5 commits, merge SHAs `769f004 → e457820 → dad249d → aa083c7 → 1351125`, closed `trip-concierge-249`)
+- 3 hotfixes during the slice arc:
+  - `c2114d0` — `hotfix-0pj` EventDensityToggle hydration mismatch (mounted-flag SSR pattern)
+  - `kc7` runtime-only fix (Next.js dev server stale Server Action HMR cache; no merge — dev server restart was the fix)
+  - `0a81281` — replay-modal agent identity for pre-Path-B trips (task_index fallback resolver)
+
+**What shipped local-only (gitignored `experiments/` per `.gitignore:8`):**
+
+- Experiment 2 (mutmut) baseline run captured (`03-mutmut-results.md`, 6.1KB) — 71.1% strict mutation kill rate, 77% of survivors concentrated in `app/worker.py`. Discharged `trip-concierge-ht5`.
+- Experiment 3 (Braintrust) lived — 13 sub-cases across 3 scorer families, ~$2.43 spend, 51.8min wall. Findings file `03-braintrust-observations.md` (45.8KB). 4 product gaps surfaced (vibe-dropped, executor-singleton, currency-overflow, persist-rollback-invisibility). 4 v1.0b tickets filed: `trip-concierge-an7` (P1 vibe plumbing) · `trip-concierge-1a0` (P1 Pydantic currency validator) · `trip-concierge-d09` (P2 CrewAI Executor concurrency) · `trip-concierge-cd5` (P1 persist-rollback observability).
+- Experiment 4 (git-ai) lived — full supply-chain audit + capability + stress tests. Findings file `04-git-ai-observations.md` (25.3KB). 18 numbered findings, honest CISO recommendation = "do not adopt for compliance-grade provenance." 2 v1.0b design questions filed: `trip-concierge-tut` (P3 granularity design) · `trip-concierge-3og` (P3 rebase-durability acceptance gate). Tool fully uninstalled at experiment close.
+- Cross-experiment synthesis file `00-banked-observations.md` (85.0KB) — **64 banked observations across 3 tiers** for Marsh deck synthesis (Tim Bennett / Zensar). Two coherent multi-slide arcs named: the experiment-trio narrative (Langfuse → mutmut → Braintrust) and the CISO-conversation cluster (Tier 1 #12 → #13 → #14).
+
+**Spec + doc deltas merged to main this week:**
+
+- `docs/design-spec.md` v1.0.7 (§9.18 Dialog modal-mode pattern; pre-week) → v1.0.8 (§9.19 Planning theater + replay-mode dual rendering)
+- BUILD_PLAN.md slice 4.7-theater entry (above)
+- No CLAUDE.md changes — but lean candidate from git-ai #27: `.claude/rules/install-audit-hygiene.md` (pre-install state snapshot before any tool install audit). Not formalized this week; flagged for next deck-synthesis pass.
+
+**Beads state at week close:**
+
+- Closed: `trip-concierge-249` (slice 4.7-theater), `trip-concierge-ht5` (mutmut). Hotfix tickets closed in their own arcs (0pj, on7, 3x5, kc7, nwk, kyh, 0a81281 — see above for SHAs).
+- Filed during week: 6 new tickets (an7, 1a0, d09, cd5, tut, 3og) — 3 P1 bugs, 1 P1 decision, 2 P3 decisions. All have full body descriptions with empirical evidence + suggested fixes + cross-references to observations file.
+
+**Process state at session close:**
+
+- arq worker PID 64087 — 4d 4h uptime; loaded code at slice 4.7-theater commit 1 (`769f004` Redis events instrumentation). No worker-code commits since.
+- uvicorn PID 64086 — same start time as worker.
+- Next.js dev server PID 83441 — 4d 0h uptime; restart point was the kc7 hotfix (started fresh after the stale Flight cache was diagnosed).
+- All three healthy; recommendation: keep running through demo dry-run, restart only if worker-code changes land.
+
+**Marsh deck readiness check (per `00-banked-observations.md` closing section):**
+
+- 14 Tier 1 entries (was 9 at start of week — +5 from experiment 3 & 4 promotion passes)
+- Two named arcs ready for deck synthesis (experiment-trio + CISO cluster)
+- 6 v1.0b tickets filed are themselves deck content (the "evals produce findings before scores" framing is anchored in these tickets)
+
 ### Slice 4.7: Source citations expansion + "why this was picked"
 
 - [ ] **Done when:** Tapping a block expands to show source list, confidence indicator, and rationale.
