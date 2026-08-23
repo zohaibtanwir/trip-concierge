@@ -4,23 +4,23 @@ version = "0.1.0"
 description = "Trip Concierge backend: FastAPI service + CrewAI agents."
 requires-python = "==3.12.*"
 dependencies = [
-    "alembic==1.18.4",
+    "alembic==1.19.1",
     "arq==0.28.0",
     "email-validator==2.3.0",
-    "fastapi==0.136.3",
+    "fastapi==0.141.1",
     "httpx==0.28.1",
     "psycopg[binary]==3.3.4",
-    "pydantic==2.12.5",
-    "pydantic-settings==2.10.1",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.15.0",
     # PyJWT for MCP token signing/verifying. Chose over python-jose because
     # of better maintenance and a cleaner security advisory history.
     "pyjwt==2.13.0",
-    "pytest==9.0.3",
-    "python-dotenv==1.2.2",
-    "slowapi==0.1.9",
-    "sqlalchemy==2.0.50",
+    "pytest==9.1.1",
+    "python-dotenv==1.2.3",
+    "slowapi==0.1.10",
+    "sqlalchemy==2.0.52",
     "trip-concierge-agents",
-    "uvicorn==0.48.0",
+    "uvicorn==0.52.4",
 ]
 
 [project.scripts]
@@ -33,10 +33,10 @@ trip-concierge-agents = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "mutmut>=3.6.0",
-    "mypy==2.1.0",
+    "mutmut>=3.7.0",
+    "mypy==2.3.1",
     "pytest-asyncio==1.4.0",
-    "ruff==0.15.14",
+    "ruff==0.16.3",
 ]
 
 [tool.ruff]
